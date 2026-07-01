@@ -1,0 +1,46 @@
+:root {
+  --primary: #1e3a8a; /* Deep Likud Blue */
+  --primary-light: #3b82f6; /* Electric Blue */
+  --accent: #f59e0b; /* Gold/Amber */
+  --success: #10b981; /* Emerald Green */
+  --error: #ef4444; /* Rose Red */
+  --warning: #f59e0b; /* Amber */
+  --info: #06b6d4; /* Cyan */
+  
+  --bg-gradient: linear-gradient(135deg, #070a13 0%, #0d111d 50%, #17153a 100%);
+  --card-bg: rgba(255, 255, 255, 0.03);
+  --card-border: rgba(255, 255, 255, 0.06);
+  
+  --text-primary: #f9fafb;
+  --text-secondary: #9ca3af;
+  --text-muted: #6b7280;
+  
+  font-family: 'Rubik', system-ui, -apple-system, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color-scheme: dark;
+  background-color: #070a13;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  height: 100vh;
+  width: 100vw;
+  background: var(--bg-gradient);
+  color: var(--text-primary);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+}

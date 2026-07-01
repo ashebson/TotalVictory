@@ -1,0 +1,115 @@
+:root {
+  --primary: #1e3a8a; /* Deep Likud Blue */
+  --primary-light: #3b82f6; /* Electric Blue */
+  --accent: #f59e0b; /* Gold/Amber */
+  --success: #10b981; /* Emerald Green */
+  --error: #ef4444; /* Rose Red */
+  --warning: #f59e0b; /* Amber */
+  --info: #06b6d4; /* Cyan */
+  
+  --bg-gradient: linear-gradient(135deg, #090d16 0%, #111827 50%, #1e1b4b 100%);
+  --card-bg: rgba(255, 255, 255, 0.04);
+  --card-bg-hover: rgba(255, 255, 255, 0.08);
+  --card-border: rgba(255, 255, 255, 0.08);
+  --glass-effect: backdrop-filter: blur(16px) saturate(180%);
+  
+  --text-primary: #f9fafb;
+  --text-secondary: #9ca3af;
+  --text-muted: #6b7280;
+  
+  font-family: 'Rubik', system-ui, -apple-system, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color-scheme: dark;
+  background-color: #090d16;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  min-height: 100vh;
+  background: var(--bg-gradient);
+  color: var(--text-primary);
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  outline: none;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+input {
+  font-family: inherit;
+  outline: none;
+}
+
+/* Animations */
+@keyframes swipeLeft {
+  0% {
+    transform: translate(0, 0) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-150%, 50px) rotate(-20deg);
+    opacity: 0;
+  }
+}
+
+@keyframes swipeRight {
+  0% {
+    transform: translate(0, 0) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(150%, 50px) rotate(20deg);
+    opacity: 0;
+  }
+}
+
+@keyframes cardAppear {
+  0% {
+    transform: scale(0.9) translateY(30px);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes pulse-glowing {
+  0%, 100% {
+    box-shadow: 0 0 15px rgba(59, 130, 246, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 25px rgba(59, 130, 246, 0.8);
+  }
+}
+
+.swipe-left-anim {
+  animation: swipeLeft 0.4s forwards;
+}
+
+.swipe-right-anim {
+  animation: swipeRight 0.4s forwards;
+}
+
+.card-enter-anim {
+  animation: cardAppear 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.1) forwards;
+}

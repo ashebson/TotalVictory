@@ -1,0 +1,46 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Caller {
+  id        Int       @id @default(autoincrement())
+  name      String    @unique
+  createdAt DateTime  @default(now())
+  contacts  Contact[]
+  callLogs  CallLog[]
+}
+
+model Contact {
+  id           Int       @id @default(autoincrement())
+  name         String
+  phone        String    @unique
+  city         String?
+  sector       String?
+  familySize   Int?
+  notes        String?
+  status       String    @default("PENDING") // PENDING, SUCCESS, NOT_INTERESTED, NO_ANSWER, INVALID_NUMBER
+  lastCalledAt DateTime?
+  callerId     Int?
+  caller       Caller?   @relation(fields: [callerId], references: [id])
+  callLogs     CallLog[]
+}
+
+model CallLog {
+  id        Int      @id @default(autoincrement())
+  callerId  Int
+  contactId Int
+  status    String   // SUCCESS, NOT_INTERESTED, NO_ANSWER, INVALID_NUMBER
+  timestamp DateTime @default(now())
+  caller    Caller   @relation(fields: [callerId], references: [id], onDelete: Cascade)
+  contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+}
+
+model Setting {
+  key   String @id
+  value String
+}

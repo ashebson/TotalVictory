@@ -1,0 +1,75 @@
+services:
+  # Database Service
+  db:
+    image: postgres:15-alpine
+    container_name: campaign-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: campaign_secure_pass_2026
+      POSTGRES_DB: campaign_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d campaign_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Backend Service
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: campaign-backend
+    environment:
+      DATABASE_URL: postgresql://postgres:campaign_secure_pass_2026@db:5432/campaign_db?schema=public
+      PORT: 5001
+    ports:
+      - "5001:5001"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Caller Mobile App (Profile: caller)
+  caller-app:
+    build:
+      context: ./frontend-caller
+      dockerfile: Dockerfile
+    container_name: campaign-caller-app
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    profiles:
+      - caller
+
+  # Admin Dashboard App (Profile: admin)
+  admin-app:
+    build:
+      context: ./frontend-admin
+      dockerfile: Dockerfile
+    container_name: campaign-admin-app
+    ports:
+      - "5174:80"
+    depends_on:
+      - backend
+    profiles:
+      - admin
+
+  # TV Activity Display App (Profile: tv)
+  tv-display:
+    build:
+      context: ./frontend-tv
+      dockerfile: Dockerfile
+    container_name: campaign-tv-display
+    ports:
+      - "5175:80"
+    depends_on:
+      - backend
+    profiles:
+      - tv
+
+volumes:
+  pgdata:

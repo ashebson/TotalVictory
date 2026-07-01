@@ -41,7 +41,7 @@ async function broadcastStatsUpdate() {
 async function initSettings() {
   const defaults = [
     { key: "whatsapp_template", value: "שלום {name}, שמחתי לשוחח איתך! נשמח לתמיכתך בחבר הכנסת עמית הלוי בפריימריז הקרובים בליכוד. ביחד ננצח! למידע נוסף: https://amithalevi.org.il" },
-    { key: "polymarket_url", value: "https://polymarket.com" },
+    { key: "polymarket_url", value: "https://embed.polymarket.com/market?market=will-likud-win-fewer-than-20-seats-in-the-2026-israeli-legislative-election&theme=dark&border=true&height=300" },
     { key: "win_percentage", value: "74.8" },
     { key: "target_calls", value: "5000" }
   ];

@@ -8,6 +8,7 @@ import * as XLSX from "xlsx";
 import zlib from "zlib";
 import path from "path";
 import fs from "fs/promises";
+import nodemailer from "nodemailer";
 
 const DATA_FILE = path.resolve(process.cwd(), "data/local-db.json");
 
@@ -40,6 +41,132 @@ const defaultSettings = [
 
 function cleanPhone(phone: unknown) { return String(phone || "").replace(/\D/g, ""); }
 function normalizeHeader(value: string) { return value.trim().replace(/^"|"$/g, "").toLowerCase(); }
+
+async function saveStore() {
+  if (process.env.USE_MEMORY_DB === "true") {
+    await saveMemoryStore();
+  } else {
+    await savePrismaStore();
+  }
+}
+
+async function sendRegistrationNotification(admin: any, planId: string) {
+  const adminDetails = `שם: ${admin.fullName}
+ארגון: ${admin.organization}
+טלפון: ${admin.phone}
+אימייל: ${admin.email}
+מסלול: ${planLabel(planId)}
+מספר בקשה: ${admin.id}`;
+
+  const messageText = `הרשמת מנהל חדש במערכת Total Victory:
+${adminDetails}`;
+
+  const webhookUrl = process.env.NOTIFICATION_WEBHOOK_URL;
+  if (webhookUrl) {
+    try {
+      await fetch(webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: messageText,
+          text: messageText,
+        }),
+      });
+      console.log("Notification webhook sent successfully");
+    } catch (err: any) {
+      console.error("Error sending notification webhook:", err.message);
+    }
+  }
+
+  const smtpHost = process.env.SMTP_HOST;
+  const smtpPort = Number(process.env.SMTP_PORT) || 587;
+  const smtpUser = process.env.SMTP_USER;
+  const smtpPass = process.env.SMTP_PASS;
+  const smtpFrom = process.env.SMTP_FROM || smtpUser;
+  const notifyEmail = process.env.NOTIFY_EMAIL;
+
+  if (smtpHost && smtpUser && smtpPass && notifyEmail) {
+    try {
+      const transporter = nodemailer.createTransport({
+        host: smtpHost,
+        port: smtpPort,
+        secure: smtpPort === 465 || process.env.SMTP_SECURE === "true",
+        auth: {
+          user: smtpUser,
+          pass: smtpPass,
+        },
+      });
+
+      await transporter.sendMail({
+        from: smtpFrom,
+        to: notifyEmail,
+        subject: `Total Victory - הרשמת מנהל חדש: ${admin.fullName}`,
+        text: messageText,
+        html: `<div dir="rtl" style="font-family: sans-serif;">
+          <h2>הרשמת מנהל חדש במערכת Total Victory</h2>
+          <p><strong>פרטי הנרשם:</strong></p>
+          <ul>
+            <li><strong>שם מלא:</strong> ${admin.fullName}</li>
+            <li><strong>ארגון:</strong> ${admin.organization}</li>
+            <li><strong>טלפון:</strong> ${admin.phone}</li>
+            <li><strong>אימייל:</strong> ${admin.email}</li>
+            <li><strong>מסלול:</strong> ${planLabel(planId)}</li>
+            <li><strong>מספר בקשה:</strong> ${admin.id}</li>
+          </ul>
+        </div>`,
+      });
+      console.log("Notification email sent successfully");
+    } catch (err: any) {
+      console.error("Error sending notification email:", err.message);
+    }
+  }
+}
+
+function authenticateAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const authHeader = req.headers.authorization;
+  const customHeader = req.headers["x-admin-passcode"];
+  const queryPasscode = req.query.passcode;
+  
+  const passcode = (authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : authHeader) 
+    || (typeof customHeader === "string" ? customHeader : undefined)
+    || (typeof queryPasscode === "string" ? queryPasscode : undefined);
+
+  if (!passcode) {
+    return res.status(401).json({ error: "Missing admin passcode authorization" });
+  }
+  
+  if (passcode === "halevi2026") {
+    return next();
+  }
+  
+  const admin = memory.admins.find((item) => item.passcode === passcode && item.status === "ACTIVE");
+  if (!admin) {
+    return res.status(401).json({ error: "Invalid or inactive admin passcode" });
+  }
+  
+  next();
+}
+
+function authenticateCaller(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const phoneHeader = req.headers["x-caller-phone"];
+  const callerIdQuery = req.query.callerId || req.body.callerId;
+  
+  if (!phoneHeader) {
+    return res.status(401).json({ error: "Missing caller phone authorization" });
+  }
+  
+  const normalizedPhone = cleanPhone(phoneHeader);
+  const caller = memory.callers.find((item) => item.phone === normalizedPhone);
+  if (!caller) {
+    return res.status(401).json({ error: "Caller phone not registered" });
+  }
+  
+  if (callerIdQuery && Number(callerIdQuery) !== caller.id) {
+    return res.status(403).json({ error: "Caller ID mismatch" });
+  }
+  
+  next();
+}
 
 function splitCsvLine(line: string, delimiter: string) {
   const cells: string[] = [];
@@ -157,7 +284,6 @@ function choosePhone(cells: string[], headerMap: HeaderMap) {
   return orderedIndexes.length ? cells[orderedIndexes[0]]?.trim() : undefined;
 }
 
-
 function buildSourceData(headers: string[], cells: string[]) {
   const data: Record<string, string> = {};
   headers.forEach((header, index) => {
@@ -265,7 +391,6 @@ function parseXlsx(base64: string) {
   return normalizeRows(rows);
 }
 
-
 function exportStatusLabel(status: string) {
   const labels: Record<string, string> = {
     PENDING: "ממתין לשיחה",
@@ -281,6 +406,7 @@ function csvEscape(value: unknown) {
   const text = String(value ?? "");
   return /[",\n\r]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
 }
+
 function projectExportRows(projectId: number) {
   const project = memory.projects.find((item) => item.id === projectId);
   const projectContacts = memory.contacts.filter((contact) => contact.projectId === projectId).sort((a, b) => a.id - b.id);
@@ -319,6 +445,7 @@ function projectExportXlsx(projectId: number) {
   XLSX.utils.book_append_sheet(workbook, worksheet, "נתונים");
   return XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
 }
+
 function parseUploadedContacts(payload: any) {
   if (Array.isArray(payload.contacts)) return payload.contacts;
   if (payload.fileContentBase64 && String(payload.fileName || "").toLowerCase().endsWith(".xlsx")) return parseXlsx(payload.fileContentBase64);
@@ -338,6 +465,7 @@ function projectStats(projectId: number) {
     totalCalled: projectContacts.filter((contact) => contact.status !== "PENDING").length,
   };
 }
+
 function allStats() {
   return {
     total: memory.contacts.length,
@@ -349,6 +477,7 @@ function allStats() {
     totalCalled: memory.contacts.filter((contact) => contact.status !== "PENDING").length,
   };
 }
+
 function tvStats() {
   const stats = allStats();
   const settingValue = (key: string, fallback: string) => memory.settings.find((item) => item.key === key)?.value || fallback;
@@ -387,10 +516,12 @@ function tvStats() {
     projects: memory.projects.map(serializeProject),
   };
 }
+
 function serializeProject(project: Project) {
   const callerIds = memory.callerProjects.filter((link) => link.projectId === project.id).map((link) => link.callerId);
   return { ...project, stats: projectStats(project.id), callers: memory.callers.filter((caller) => callerIds.includes(caller.id)) };
 }
+
 function getCallerProjects(callerId: number) {
   const projectIds = memory.callerProjects.filter((link) => link.callerId === callerId).map((link) => link.projectId);
   return memory.projects.filter((project) => projectIds.includes(project.id)).map(serializeProject);
@@ -500,7 +631,9 @@ async function initSettings() {
   }
   for (const item of defaultSettings) if (!memory.settings.some((setting) => setting.key === item.key)) memory.settings.push({ ...item });
 }
+
 async function broadcastStatsUpdate() { io.emit("stats-update", tvStats()); }
+
 function ensureCaller(name: string | undefined, phone: string) {
   const trimmed = String(name || "").trim();
   const normalizedPhone = cleanPhone(phone);
@@ -513,9 +646,11 @@ function ensureCaller(name: string | undefined, phone: string) {
   }
   return caller;
 }
+
 function linkCallerToProject(callerId: number, projectId: number) {
   if (!memory.callerProjects.some((link) => link.callerId === callerId && link.projectId === projectId)) memory.callerProjects.push({ callerId, projectId });
 }
+
 function insertContacts(projectId: number, contacts: any[]) {
   let inserted = 0;
   let skipped = 0;
@@ -530,7 +665,6 @@ function insertContacts(projectId: number, contacts: any[]) {
   }
   return { inserted, skipped };
 }
-
 
 function generatePasscode() {
   return "admin-" + Math.random().toString(36).slice(2, 8);
@@ -579,7 +713,7 @@ function buildPasscodeWhatsAppUrl(admin: any) {
 
 io.on("connection", (socket) => { console.log("Client connected:", socket.id); socket.on("disconnect", () => console.log("Client disconnected:", socket.id)); });
 
-app.post("/api/login", (req, res) => {
+app.post("/api/login", async (req, res) => {
   try {
     const { name, phone } = req.body;
     const normalizedPhone = cleanPhone(phone);
@@ -587,7 +721,7 @@ app.post("/api/login", (req, res) => {
     if (normalizedPhone.length < 9) return res.status(400).json({ error: "Valid phone is required" });
     const caller = ensureCaller(String(name), normalizedPhone);
     res.json({ ...caller, projects: getCallerProjects(caller.id) });
-    saveMemoryStore();
+    await saveStore();
     broadcastStatsUpdate();
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
@@ -625,12 +759,15 @@ app.post("/api/admins/register", async (req, res) => {
     }
     const subscription = { id: memory.ids.subscription++, adminId: admin.id, planId, status: admin.status === "ACTIVE" ? "ACTIVE" : "PENDING_PAYMENT", provider: "bank_transfer", amount: planId === "annual" ? 1990 : 199, currency: "ILS", createdAt: new Date().toISOString() };
     memory.subscriptions.push(subscription);
-    await saveMemoryStore();
+    await saveStore();
     res.json({ success: true, mode: "manual_payment", admin: publicAdmin(admin), subscription, whatsappUrl: buildPaymentWhatsAppUrl(admin, subscription), message: "בקשת ההרשמה נקלטה. שלח וואטסאפ להסדרת העברה בנקאית וקבלת קוד גישה." });
+    
+    // Trigger notification
+    sendRegistrationNotification(admin, planId).catch(console.error);
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
-app.post("/api/admins/:adminId/approve", async (req, res) => {
+app.post("/api/admins/:adminId/approve", authenticateAdmin, async (req, res) => {
   try {
     const admin = memory.admins.find((item) => item.id === Number(req.params.adminId));
     if (!admin) return res.status(404).json({ error: "Admin request not found" });
@@ -642,15 +779,28 @@ app.post("/api/admins/:adminId/approve", async (req, res) => {
       subscription.provider = "bank_transfer";
       subscription.paidAt = new Date().toISOString();
     }
-    await saveMemoryStore();
+    await saveStore();
     res.json({ success: true, admin: publicAdmin(admin), passcode: admin.passcode, whatsappUrl: buildPasscodeWhatsAppUrl(admin) });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
-app.get("/api/callers", (_req, res) => res.json(memory.callers.map((caller) => ({ ...caller, projects: getCallerProjects(caller.id) }))));
-app.get("/api/callers/:callerId/projects", (req, res) => res.json(getCallerProjects(Number(req.params.callerId))));
-app.get("/api/projects", (_req, res) => res.json(memory.projects.map(serializeProject)));
-app.post("/api/projects/upload", (req, res) => {
+app.get("/api/callers", authenticateAdmin, (_req, res) => res.json(memory.callers.map((caller) => ({ ...caller, projects: getCallerProjects(caller.id) }))));
+app.get("/api/callers/:callerId/projects", authenticateCaller, (req, res) => res.json(getCallerProjects(Number(req.params.callerId))));
+
+app.post("/api/callers/:callerId/settings", authenticateCaller, async (req, res) => {
+  try {
+    const callerId = Number(req.params.callerId);
+    const caller = memory.callers.find((item) => item.id === callerId);
+    if (!caller) return res.status(404).json({ error: "Caller not found" });
+    caller.whatsappTemplate = String(req.body.whatsappTemplate || "").trim() || null;
+    await saveStore();
+    res.json({ success: true, caller });
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
+});
+
+app.get("/api/projects", authenticateAdmin, (_req, res) => res.json(memory.projects.map(serializeProject)));
+
+app.post("/api/projects/upload", authenticateAdmin, async (req, res) => {
   try {
     const projectName = String(req.body.projectName || "").trim();
     if (!projectName) return res.status(400).json({ error: "Project name is required" });
@@ -659,12 +809,12 @@ app.post("/api/projects/upload", (req, res) => {
     memory.projects.push(project);
     const result = insertContacts(project.id, contacts);
     res.json({ success: true, project: serializeProject(project), ...result });
-    saveMemoryStore();
+    await saveStore();
     broadcastStatsUpdate();
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
-app.get("/api/projects/:projectId/export.csv", (req, res) => {
+app.get("/api/projects/:projectId/export.csv", authenticateAdmin, (req, res) => {
   const projectId = Number(req.params.projectId);
   const project = memory.projects.find((item) => item.id === projectId);
   if (!project) return res.status(404).send("Project not found");
@@ -673,8 +823,7 @@ app.get("/api/projects/:projectId/export.csv", (req, res) => {
   res.send("\uFEFF" + projectExportCsv(projectId));
 });
 
-
-app.get("/api/projects/:projectId/export.xlsx", (req, res) => {
+app.get("/api/projects/:projectId/export.xlsx", authenticateAdmin, (req, res) => {
   const projectId = Number(req.params.projectId);
   const project = memory.projects.find((item) => item.id === projectId);
   if (!project) return res.status(404).send("Project not found");
@@ -684,18 +833,18 @@ app.get("/api/projects/:projectId/export.xlsx", (req, res) => {
   res.send(workbook);
 });
 
-app.delete("/api/projects/:projectId", (req, res) => {
+app.delete("/api/projects/:projectId", authenticateAdmin, async (req, res) => {
   const projectId = Number(req.params.projectId);
   memory.projects = memory.projects.filter((item) => item.id !== projectId);
   memory.contacts = memory.contacts.filter((item) => item.projectId !== projectId);
   memory.callLogs = memory.callLogs.filter((item) => item.projectId !== projectId);
   memory.callerProjects = memory.callerProjects.filter((item) => item.projectId !== projectId);
   res.json({ success: true });
-  saveMemoryStore();
+  await saveStore();
   broadcastStatsUpdate();
 });
 
-app.post("/api/projects/:projectId/callers", (req, res) => {
+app.post("/api/projects/:projectId/callers", authenticateAdmin, async (req, res) => {
   try {
     const projectId = Number(req.params.projectId);
     const project = memory.projects.find((item) => item.id === projectId);
@@ -705,19 +854,21 @@ app.post("/api/projects/:projectId/callers", (req, res) => {
     const caller = ensureCaller(undefined, phone);
     linkCallerToProject(caller.id, projectId);
     res.json({ success: true, project: serializeProject(project), caller });
-    saveMemoryStore();
+    await saveStore();
     broadcastStatsUpdate();
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
-app.delete("/api/projects/:projectId/callers/:callerId", (req, res) => {
+
+app.delete("/api/projects/:projectId/callers/:callerId", authenticateAdmin, async (req, res) => {
   const projectId = Number(req.params.projectId);
   const callerId = Number(req.params.callerId);
   memory.callerProjects = memory.callerProjects.filter((link) => !(link.projectId === projectId && link.callerId === callerId));
   res.json({ success: true });
-  saveMemoryStore();
+  await saveStore();
   broadcastStatsUpdate();
 });
-app.get("/api/contacts/next", (req, res) => {
+
+app.get("/api/contacts/next", authenticateCaller, async (req, res) => {
   try {
     const callerId = Number(req.query.callerId);
     const projectId = Number(req.query.projectId);
@@ -726,16 +877,18 @@ app.get("/api/contacts/next", (req, res) => {
     if (!allowed) return res.status(403).json({ error: "Caller is not assigned to this project" });
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
     const contact = memory.contacts.filter((item) => item.projectId === projectId && item.status === "PENDING").filter((item) => item.callerId == null || item.callerId === callerId || (item.lastCalledAt && item.lastCalledAt < fiveMinutesAgo)).sort((a, b) => a.id - b.id)[0] || null;
-    if (contact) { contact.callerId = callerId; contact.lastCalledAt = new Date(); saveMemoryStore(); }
+    if (contact) { contact.callerId = callerId; contact.lastCalledAt = new Date(); await saveStore(); }
     res.json(contact);
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
-app.post("/api/contacts/skip", (req, res) => {
+
+app.post("/api/contacts/skip", authenticateCaller, async (req, res) => {
   const contact = memory.contacts.find((item) => item.id === Number(req.body.contactId));
-  if (contact) { contact.callerId = null; contact.lastCalledAt = null; saveMemoryStore(); }
+  if (contact) { contact.callerId = null; contact.lastCalledAt = null; await saveStore(); }
   res.json({ success: true });
 });
-app.post("/api/calls", (req, res) => {
+
+app.post("/api/calls", authenticateCaller, async (req, res) => {
   try {
     const callerId = Number(req.body.callerId);
     const contactId = Number(req.body.contactId);
@@ -754,11 +907,12 @@ app.post("/api/calls", (req, res) => {
       setting.value = (status === "SUCCESS" ? Math.min(99.9, value + 0.15) : Math.max(50, value - 0.08)).toFixed(2);
     }
     res.json({ ...log, caller: memory.callers.find((caller) => caller.id === callerId), contact });
-    saveMemoryStore();
+    await saveStore();
     broadcastStatsUpdate();
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
-app.get("/api/stats/admin", (_req, res) => {
+
+app.get("/api/stats/admin", authenticateAdmin, (_req, res) => {
   const callers = memory.callers.map((caller) => {
     const logs = memory.callLogs.filter((log) => log.callerId === caller.id);
     const successLogs = logs.filter((log) => log.status === "SUCCESS");
@@ -768,9 +922,11 @@ app.get("/api/stats/admin", (_req, res) => {
   const pendingAdmins = memory.admins.filter((admin) => admin.status === "PENDING_PAYMENT").map(publicAdmin);
   res.json({ summary: allStats(), callers, projects: memory.projects.map(serializeProject), pendingAdmins });
 });
+
 app.get("/api/stats/tv", (_req, res) => res.json(tvStats()));
 app.get("/api/settings", (_req, res) => res.json(Object.fromEntries(memory.settings.map((item) => [item.key, item.value]))));
-app.post("/api/settings", (req, res) => {
+
+app.post("/api/settings", authenticateAdmin, async (req, res) => {
   const settings = req.body.settings;
   if (!settings || typeof settings !== "object") return res.status(400).json({ error: "Invalid settings payload" });
   for (const [key, value] of Object.entries(settings)) {
@@ -778,20 +934,22 @@ app.post("/api/settings", (req, res) => {
     if (existing) existing.value = String(value); else memory.settings.push({ key, value: String(value) });
   }
   res.json({ success: true });
-  saveMemoryStore();
+  await saveStore();
   broadcastStatsUpdate();
 });
-app.post("/api/contacts/upload", (req, res) => {
+
+app.post("/api/contacts/upload", authenticateAdmin, async (req, res) => {
   try {
     let project = memory.projects[0];
     if (!project) { project = { id: memory.ids.project++, name: "פרויקט ראשי", sourceFileName: null, createdAt: new Date() }; memory.projects.push(project); }
     const result = insertContacts(project.id, req.body.contacts || []);
     res.json({ success: true, ...result, project: serializeProject(project) });
-    saveMemoryStore();
+    await saveStore();
     broadcastStatsUpdate();
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
-app.post("/api/contacts/seed", (_req, res) => {
+
+app.post("/api/contacts/seed", authenticateAdmin, async (_req, res) => {
   let project = memory.projects.find((item) => item.name === "פרויקט דוגמה");
   if (!project) { project = { id: memory.ids.project++, name: "פרויקט דוגמה", sourceFileName: "seed", createdAt: new Date() }; memory.projects.push(project); }
   const contacts = [
@@ -803,29 +961,35 @@ app.post("/api/contacts/seed", (_req, res) => {
   const result = insertContacts(project.id, contacts);
   if (memory.callers.length) linkCallerToProject(memory.callers[0].id, project.id);
   res.json({ success: true, seededCount: result.inserted, project: serializeProject(project) });
-  saveMemoryStore();
+  await saveStore();
   broadcastStatsUpdate();
 });
-app.post("/api/contacts/reset", (_req, res) => {
+
+app.post("/api/contacts/reset", authenticateAdmin, async (_req, res) => {
   memory.callLogs = [];
   memory.contacts.forEach((contact) => { contact.status = "PENDING"; contact.callerId = null; contact.lastCalledAt = null; });
   res.json({ success: true });
-  saveMemoryStore();
+  await saveStore();
   broadcastStatsUpdate();
 });
-app.post("/api/callers/reset", (_req, res) => {
+
+app.post("/api/callers/reset", authenticateAdmin, async (_req, res) => {
   memory.callLogs = []; memory.callers = []; memory.callerProjects = [];
   memory.contacts.forEach((contact) => { contact.status = "PENDING"; contact.callerId = null; contact.lastCalledAt = null; });
   res.json({ success: true });
-  saveMemoryStore();
+  await saveStore();
   broadcastStatsUpdate();
 });
 
 const PORT = process.env.PORT || 5001;
 server.listen(PORT, async () => {
-  await loadMemoryStore();
+  if (process.env.USE_MEMORY_DB === "true") {
+    await loadMemoryStore();
+  } else {
+    await loadPrismaStore();
+  }
   await initSettings();
-  await saveMemoryStore();
+  await saveStore();
   console.log("Server running on port " + PORT);
   console.log(process.env.USE_MEMORY_DB === "true" ? "Using local memory database" : "Using Prisma database");
 });

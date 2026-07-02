@@ -52,6 +52,17 @@ export default function App() {
   const [sessionCount, setSessionCount] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  const getCallerHeaders = (extraHeaders: Record<string, string> = {}) => {
+    const saved = localStorage.getItem("total_victory_caller");
+    if (!saved) return extraHeaders;
+    try {
+      const parsed = JSON.parse(saved);
+      return parsed.phone ? { ...extraHeaders, "x-caller-phone": parsed.phone } : extraHeaders;
+    } catch (e) {
+      return extraHeaders;
+    }
+  };
+
   useEffect(() => {
     const saved = localStorage.getItem("total_victory_caller");
     if (!saved) return;
@@ -85,7 +96,7 @@ export default function App() {
 
   const refreshProjects = async (callerId: number) => {
     try {
-      const res = await fetch(API_URL + "/api/callers/" + callerId + "/projects");
+      const res = await fetch(API_URL + "/api/callers/" + callerId + "/projects", { headers: getCallerHeaders() });
       if (!res.ok) return;
       const data = await res.json();
       setProjects(data || []);
@@ -112,7 +123,7 @@ export default function App() {
     if (showLoader) setLoading(true);
     setErrorMsg(null);
     try {
-      const res = await fetch(API_URL + "/api/contacts/next?callerId=" + caller.id + "&projectId=" + selectedProject.id);
+      const res = await fetch(API_URL + "/api/contacts/next?callerId=" + caller.id + "&projectId=" + selectedProject.id, { headers: getCallerHeaders() });
       if (res.ok) setCurrentContact(await res.json());
       else if (res.status === 403) setErrorMsg("הפרויקט הזה לא משויך אליך. פנה למנהל לשיוך.");
       else setErrorMsg("שגיאה בטעינת איש קשר. נסה שוב.");
@@ -194,7 +205,7 @@ export default function App() {
     try {
       const res = await fetch(API_URL + "/api/callers/" + caller.id + "/settings", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getCallerHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ whatsappTemplate: personalWhatsappTemplate }),
       });
       const data = await res.json();
@@ -227,7 +238,7 @@ export default function App() {
     try {
       const res = await fetch(API_URL + "/api/calls", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getCallerHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ callerId: caller.id, contactId: currentContact.id, status: statusSelection, callNotes }),
       });
       if (!res.ok) throw new Error("save failed");

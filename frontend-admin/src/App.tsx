@@ -15,7 +15,7 @@ const emptySummary: Summary = { total: 0, pending: 0, success: 0, notInterested:
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [passcode, setPasscode] = useState("");
+  const [passcode, setPasscode] = useState(() => sessionStorage.getItem("admin_passcode") || "");
   const [passcodeError, setPasscodeError] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [registerForm, setRegisterForm] = useState({ fullName: "", email: "", phone: "", organization: "", planId: "monthly" });
@@ -34,6 +34,11 @@ export default function App() {
   const [settings, setSettings] = useState({ win_percentage: "74.8", target_calls: "5000", polymarket_url: "https://polymarket.com", whatsapp_template: "" });
   const [settingsSaved, setSettingsSaved] = useState(false);
 
+  const getAdminHeaders = (extraHeaders: Record<string, string> = {}) => {
+    const savedPass = sessionStorage.getItem("admin_passcode") || passcode;
+    return savedPass ? { ...extraHeaders, "x-admin-passcode": savedPass } : extraHeaders;
+  };
+
   useEffect(() => { if (sessionStorage.getItem("admin_authenticated") === "true") setIsAuthenticated(true); }, []);
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -44,7 +49,7 @@ export default function App() {
   }, [isAuthenticated]);
 
   const fetchData = async () => {
-    const res = await fetch(API_URL + "/api/stats/admin");
+    const res = await fetch(API_URL + "/api/stats/admin", { headers: getAdminHeaders() });
     if (!res.ok) return;
     const data = await res.json();
     setSummary(data.summary || emptySummary);
@@ -54,7 +59,7 @@ export default function App() {
   };
 
   const fetchSettings = async () => {
-    const res = await fetch(API_URL + "/api/settings");
+    const res = await fetch(API_URL + "/api/settings", { headers: getAdminHeaders() });
     if (!res.ok) return;
     const data = await res.json();
     setSettings({ win_percentage: data.win_percentage || "74.8", target_calls: data.target_calls || "5000", polymarket_url: data.polymarket_url || "https://polymarket.com", whatsapp_template: data.whatsapp_template || "" });
@@ -72,6 +77,7 @@ export default function App() {
       if (!res.ok) throw new Error("invalid");
       setIsAuthenticated(true);
       sessionStorage.setItem("admin_authenticated", "true");
+      sessionStorage.setItem("admin_passcode", passcode);
     } catch {
       setPasscodeError(true);
     }
@@ -117,7 +123,7 @@ export default function App() {
     setUploadResult(null);
     try {
       const payload = await readFilePayload(selectedFile);
-      const res = await fetch(API_URL + "/api/projects/upload", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectName: projectName.trim(), fileName: selectedFile.name, ...payload }) });
+      const res = await fetch(API_URL + "/api/projects/upload", { method: "POST", headers: getAdminHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ projectName: projectName.trim(), fileName: selectedFile.name, ...payload }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "העלאה נכשלה");
       setUploadResult("הפרויקט נפתח בהצלחה. נטענו " + data.inserted + " רשומות, דולגו " + data.skipped + ".");
@@ -138,7 +144,7 @@ export default function App() {
     if (!phone) return;
     setLoading(true);
     try {
-      const res = await fetch(API_URL + "/api/projects/" + projectId + "/callers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ phone }) });
+      const res = await fetch(API_URL + "/api/projects/" + projectId + "/callers", { method: "POST", headers: getAdminHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ phone }) });
       if (res.ok) {
         setCallerPhoneInputs((prev) => ({ ...prev, [projectId]: "" }));
         fetchData();
@@ -149,7 +155,7 @@ export default function App() {
   };
 
   const unassignCaller = async (projectId: number, callerId: number) => {
-    await fetch(API_URL + "/api/projects/" + projectId + "/callers/" + callerId, { method: "DELETE" });
+    await fetch(API_URL + "/api/projects/" + projectId + "/callers/" + callerId, { method: "DELETE", headers: getAdminHeaders() });
     fetchData();
   };
 
@@ -157,7 +163,7 @@ export default function App() {
     setLoading(true);
     setApprovedAdminPasscode(null);
     try {
-      const res = await fetch(API_URL + "/api/admins/" + adminId + "/approve", { method: "POST" });
+      const res = await fetch(API_URL + "/api/admins/" + adminId + "/approve", { method: "POST", headers: getAdminHeaders() });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "approval failed");
       setApprovedAdminPasscode(data.passcode);
@@ -175,23 +181,23 @@ export default function App() {
     if (!window.confirm("למחוק את הפרויקט \"" + project.name + "\" וכל נתוני השיחות שלו?")) return;
     setLoading(true);
     try {
-      await fetch(API_URL + "/api/projects/" + project.id, { method: "DELETE" });
+      await fetch(API_URL + "/api/projects/" + project.id, { method: "DELETE", headers: getAdminHeaders() });
       fetchData();
     } finally {
       setLoading(false);
     }
   };
 
-  const seedDemo = async () => { setLoading(true); try { await fetch(API_URL + "/api/contacts/seed", { method: "POST" }); fetchData(); } finally { setLoading(false); } };
+  const seedDemo = async () => { setLoading(true); try { await fetch(API_URL + "/api/contacts/seed", { method: "POST", headers: getAdminHeaders() }); fetchData(); } finally { setLoading(false); } };
 
-  const csvExportUrl = (project: Project) => API_URL + "/api/projects/" + project.id + "/export.csv";
-  const xlsxExportUrl = (project: Project) => API_URL + "/api/projects/" + project.id + "/export.xlsx";
+  const csvExportUrl = (project: Project) => API_URL + "/api/projects/" + project.id + "/export.csv?passcode=" + encodeURIComponent(sessionStorage.getItem("admin_passcode") || passcode);
+  const xlsxExportUrl = (project: Project) => API_URL + "/api/projects/" + project.id + "/export.xlsx?passcode=" + encodeURIComponent(sessionStorage.getItem("admin_passcode") || passcode);
 
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {
-      const res = await fetch(API_URL + "/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ settings }) });
+      const res = await fetch(API_URL + "/api/settings", { method: "POST", headers: getAdminHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ settings }) });
       if (res.ok) { setSettingsSaved(true); window.setTimeout(() => setSettingsSaved(false), 2500); }
     } finally { setLoading(false); }
   };

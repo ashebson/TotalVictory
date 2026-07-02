@@ -627,6 +627,13 @@
   gap: 8px;
 }
 
+.sheet-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+
 .sheet-link-box a,
 .sheet-link-box button,
 .assign-row button {

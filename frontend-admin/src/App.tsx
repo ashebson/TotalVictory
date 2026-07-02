@@ -34,12 +34,27 @@ export default function App() {
   const [settings, setSettings] = useState({ win_percentage: "74.8", target_calls: "5000", polymarket_url: "https://polymarket.com", whatsapp_template: "" });
   const [settingsSaved, setSettingsSaved] = useState(false);
 
-  const getAdminHeaders = (extraHeaders: Record<string, string> = {}) => {
+    const getAdminHeaders = (extraHeaders: Record<string, string> = {}) => {
     const savedPass = sessionStorage.getItem("admin_passcode") || passcode;
     return savedPass ? { ...extraHeaders, "x-admin-passcode": savedPass } : extraHeaders;
   };
 
-  useEffect(() => { if (sessionStorage.getItem("admin_authenticated") === "true") setIsAuthenticated(true); }, []);
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    sessionStorage.removeItem("admin_authenticated");
+    sessionStorage.removeItem("admin_passcode");
+    setPasscode("");
+  };
+
+  useEffect(() => {
+    const isAuth = sessionStorage.getItem("admin_authenticated") === "true";
+    const hasPass = sessionStorage.getItem("admin_passcode") !== null;
+    if (isAuth && hasPass) {
+      setIsAuthenticated(true);
+    } else {
+      handleLogout();
+    }
+  }, []);
   useEffect(() => {
     if (!isAuthenticated) return;
     fetchData();
@@ -256,7 +271,7 @@ export default function App() {
           <button className={"nav-item " + (activeTab === "projects" ? "active" : "")} onClick={() => setActiveTab("projects")}>פרויקטים ואקסלים</button>
           <button className={"nav-item " + (activeTab === "settings" ? "active" : "")} onClick={() => setActiveTab("settings")}>הגדרות</button>
         </nav>
-        <button onClick={() => { setIsAuthenticated(false); sessionStorage.removeItem("admin_authenticated"); }} className="btn-sidebar-logout">יציאה</button>
+        <button onClick={() => { handleLogout(); }} className="btn-sidebar-logout">יציאה</button>
       </aside>
       <main className="admin-content">
         {activeTab === "dashboard" && (

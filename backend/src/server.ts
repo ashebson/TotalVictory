@@ -364,6 +364,44 @@ function allStats() {
     totalCalled: memory.contacts.filter((contact) => contact.status !== "PENDING").length,
   };
 }
+function tvStats() {
+  const stats = allStats();
+  const settingValue = (key: string, fallback: string) => memory.settings.find((item) => item.key === key)?.value || fallback;
+  const leaderboard = memory.callers.map((caller) => {
+    const logs = memory.callLogs.filter((log) => log.callerId === caller.id);
+    const successLogs = logs.filter((log) => log.status === "SUCCESS");
+    return {
+      id: caller.id,
+      name: caller.name,
+      totalCalls: logs.length,
+      successCalls: successLogs.length,
+      successRate: logs.length ? Math.round((successLogs.length / logs.length) * 100) : 0,
+    };
+  }).filter((caller) => caller.totalCalls > 0).sort((a, b) => b.successCalls - a.successCalls || b.totalCalls - a.totalCalls).slice(0, 10);
+  const recentCalls = [...memory.callLogs].sort((a, b) => Number(b.timestamp) - Number(a.timestamp)).slice(0, 10).map((log) => {
+    const caller = memory.callers.find((item) => item.id === log.callerId);
+    const contact = memory.contacts.find((item) => item.id === log.contactId);
+    return {
+      id: log.id,
+      callerName: caller?.name || "טלפן",
+      contactName: contact?.name || "איש קשר",
+      status: log.status,
+      timestamp: log.timestamp,
+    };
+  });
+  return {
+    ...stats,
+    totalContacts: stats.total,
+    calledContacts: stats.totalCalled,
+    successCalls: stats.success,
+    leaderboard,
+    recentCalls,
+    winPercentage: Number.parseFloat(settingValue("win_percentage", "74.8")),
+    targetCalls: Number.parseInt(settingValue("target_calls", "5000"), 10) || 5000,
+    polymarketUrl: settingValue("polymarket_url", defaultSettings.find((item) => item.key === "polymarket_url")!.value),
+    projects: memory.projects.map(serializeProject),
+  };
+}
 function serializeProject(project: Project) {
   const callerIds = memory.callerProjects.filter((link) => link.projectId === project.id).map((link) => link.callerId);
   return { ...project, stats: projectStats(project.id), callers: memory.callers.filter((caller) => callerIds.includes(caller.id)) };
@@ -405,7 +443,7 @@ async function initSettings() {
   }
   for (const item of defaultSettings) if (!memory.settings.some((setting) => setting.key === item.key)) memory.settings.push({ ...item });
 }
-async function broadcastStatsUpdate() { io.emit("stats-update", { ...allStats(), projects: memory.projects.map(serializeProject) }); }
+async function broadcastStatsUpdate() { io.emit("stats-update", tvStats()); }
 function ensureCaller(name: string | undefined, phone: string) {
   const trimmed = String(name || "").trim();
   const normalizedPhone = cleanPhone(phone);
@@ -654,7 +692,7 @@ app.get("/api/stats/admin", (_req, res) => {
   });
   res.json({ summary: allStats(), callers, projects: memory.projects.map(serializeProject) });
 });
-app.get("/api/stats/tv", (_req, res) => res.json({ ...allStats(), projects: memory.projects.map(serializeProject) }));
+app.get("/api/stats/tv", (_req, res) => res.json(tvStats()));
 app.get("/api/settings", (_req, res) => res.json(Object.fromEntries(memory.settings.map((item) => [item.key, item.value]))));
 app.post("/api/settings", (req, res) => {
   const settings = req.body.settings;

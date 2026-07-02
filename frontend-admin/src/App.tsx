@@ -9,8 +9,7 @@ const API_URL = (import.meta.env.VITE_API_URL || (window.location.hostname === "
 type Tab = "dashboard" | "projects" | "settings";
 type Summary = { total: number; pending: number; success: number; notInterested: number; noAnswer: number; invalidNumber: number; totalCalled: number };
 type Caller = { id: number; name: string; phone?: string; totalCalls?: number; successCalls?: number; successRate?: number; lastCallTime?: string | null; projects?: Project[] };
-type Project = { id: number; name: string; sourceFileName?: string | null; createdAt: string; stats: Summary; callers: Caller[] };
-type PendingAdmin = { id: number; fullName: string; email: string; phone: string; organization: string; status: string; createdAt: string };
+type Project = { id: number; name: string; sourceFileName?: string | null; createdAt: string; stats: Summary; callers: Caller[] };
 
 const emptySummary: Summary = { total: 0, pending: 0, success: 0, notInterested: 0, noAnswer: 0, invalidNumber: 0, totalCalled: 0 };
 
@@ -20,13 +19,11 @@ export default function App() {
   const [passcodeError, setPasscodeError] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [registerForm, setRegisterForm] = useState({ fullName: "", email: "", phone: "", organization: "", planId: "monthly" });
-  const [registrationRequest, setRegistrationRequest] = useState<{ message: string; whatsappUrl: string } | null>(null);
-  const [approvedAdminPasscode, setApprovedAdminPasscode] = useState<string | null>(null);
+  const [registrationRequest, setRegistrationRequest] = useState<{ message: string } | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const [summary, setSummary] = useState<Summary>(emptySummary);
   const [callers, setCallers] = useState<Caller[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [pendingAdmins, setPendingAdmins] = useState<PendingAdmin[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -70,8 +67,7 @@ export default function App() {
     const data = await res.json();
     setSummary(data.summary || emptySummary);
     setCallers(data.callers || []);
-    setProjects(data.projects || []);
-    setPendingAdmins(data.pendingAdmins || []);
+    setProjects(data.projects || []);
   };
 
   const fetchSettings = async () => {
@@ -111,8 +107,7 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "registration failed");
-      setRegistrationRequest({ message: data.message || "בקשת ההרשמה נקלטה.", whatsappUrl: data.whatsappUrl || "" });
-      if (data.whatsappUrl) window.open(data.whatsappUrl, "_blank", "noopener,noreferrer");
+      setRegistrationRequest({ message: data.message || "בקשת ההצטרפות נשלחה לבדיקה." });
     } catch {
       alert("לא ניתן לשלוח בקשת הרשמה כרגע.");
     } finally {
@@ -175,24 +170,6 @@ export default function App() {
     fetchData();
   };
 
-  const approveAdmin = async (adminId: number) => {
-    setLoading(true);
-    setApprovedAdminPasscode(null);
-    try {
-      const res = await fetch(API_URL + "/api/admins/" + adminId + "/approve", { method: "POST", headers: getAdminHeaders() });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "approval failed");
-      setApprovedAdminPasscode(data.passcode);
-      if (data.whatsappUrl) window.open(data.whatsappUrl, "_blank", "noopener,noreferrer");
-      fetchData();
-    } catch {
-      alert("לא ניתן לאשר את הבקשה כרגע.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-
   const deleteProject = async (project: Project) => {
     if (!window.confirm("למחוק את הפרויקט \"" + project.name + "\" וכל נתוני השיחות שלו?")) return;
     setLoading(true);
@@ -217,6 +194,34 @@ export default function App() {
       if (res.ok) { setSettingsSaved(true); window.setTimeout(() => setSettingsSaved(false), 2500); }
     } finally { setLoading(false); }
   };
+
+  const percent = (value: number, total: number) => total ? Math.round((value / total) * 100) : 0;
+  const completionRate = percent(summary.totalCalled, summary.total);
+  const successRate = percent(summary.success, summary.totalCalled);
+  const answerRate = percent(summary.success + summary.notInterested, summary.totalCalled);
+  const activeCallers = callers.filter((caller) => (caller.totalCalls || 0) > 0).length;
+  const averageCalls = activeCallers ? Math.round(summary.totalCalled / activeCallers) : 0;
+  const statusBreakdown = [
+    { label: "תומכים", value: summary.success, color: "#10b981" },
+    { label: "לא מעוניינים", value: summary.notInterested, color: "#f59e0b" },
+    { label: "לא ענו", value: summary.noAnswer, color: "#3b82f6" },
+    { label: "מספר שגוי", value: summary.invalidNumber, color: "#ef4444" },
+    { label: "ממתינים", value: summary.pending, color: "#64748b" },
+  ];
+  let gradientStart = 0;
+  const statusGradient = summary.total
+    ? statusBreakdown.map((item) => {
+      const slice = (item.value / summary.total) * 100;
+      const segment = item.color + " " + gradientStart + "% " + (gradientStart + slice) + "%";
+      gradientStart += slice;
+      return segment;
+    }).join(", ")
+    : "#334155 0% 100%";
+  const topCallers = [...callers].sort((a, b) => (b.successCalls || 0) - (a.successCalls || 0) || (b.totalCalls || 0) - (a.totalCalls || 0)).slice(0, 8);
+  const maxCallerCalls = Math.max(1, ...topCallers.map((caller) => caller.totalCalls || 0));
+  const topProjects = [...projects]
+    .sort((a, b) => percent(b.stats.totalCalled, b.stats.total) - percent(a.stats.totalCalled, a.stats.total))
+    .slice(0, 5);
 
   if (!isAuthenticated) return (
     <div className="auth-page auth-page-clean">
@@ -254,7 +259,7 @@ export default function App() {
               </div>
               <div className="input-group"><label>מסלול</label><select value={registerForm.planId} onChange={(e) => setRegisterForm({ ...registerForm, planId: e.target.value })}><option value="monthly">חודשי - 199 ש"ח</option><option value="annual">שנתי - 1,990 ש"ח</option></select></div>
               <div className="payment-note">בסיום ההרשמה תיפתח הודעת וואטסאפ אל מנהל המערכת. לאחר העברה בנקאית יישלח אליך קוד גישה בוואטסאפ.</div>
-              {registrationRequest && <div className="result-banner success"><strong>{registrationRequest.message}</strong>{registrationRequest.whatsappUrl && <a className="btn-secondary-auth" href={registrationRequest.whatsappUrl} target="_blank" rel="noreferrer">שליחת וואטסאפ</a>}</div>}
+              {registrationRequest && <div className="result-banner success"><strong>{registrationRequest.message}</strong></div>}
               <button type="submit" className="btn-primary" disabled={loading}>{loading ? "שולח בקשה..." : "שליחת בקשת הצטרפות"}</button>
             </form>
           )}
@@ -278,20 +283,37 @@ export default function App() {
         {activeTab === "dashboard" && (
           <div className="tab-pane card-enter-anim">
             <div className="pane-header"><h1>לוח בקרה</h1><p>סיכום כל הפרויקטים וכל פעילות הטלפנים.</p></div>
-            <div className="stats-grid">
-              <div className="stat-card"><span className="stat-label">סה"כ רשומות</span><span className="stat-number">{summary.total}</span></div>
-              <div className="stat-card success-glow"><span className="stat-label">שיחות מוצלחות</span><span className="stat-number">{summary.success}</span></div>
-              <div className="stat-card"><span className="stat-label">ממתינים</span><span className="stat-number">{summary.pending}</span></div>
-              <div className="stat-card progress-glow"><span className="stat-label">התקדמות</span><span className="stat-number">{summary.total ? Math.round((summary.totalCalled / summary.total) * 100) : 0}%</span><span className="stat-sub">{summary.totalCalled} מתוך {summary.total}</span></div>
+            <div className="stats-grid stats-grid-rich">
+              <div className="stat-card"><span className="stat-label">סה״כ רשומות</span><span className="stat-number">{summary.total}</span><span className="stat-sub">{summary.totalCalled} כבר טופלו</span></div>
+              <div className="stat-card success-glow"><span className="stat-label">אחוז הצלחה</span><span className="stat-number">{successRate}%</span><span className="stat-sub">{summary.success} תומכים מתוך {summary.totalCalled || 0} שיחות</span></div>
+              <div className="stat-card"><span className="stat-label">אחוז מענה</span><span className="stat-number">{answerRate}%</span><span className="stat-sub">תומכים + לא מעוניינים</span></div>
+              <div className="stat-card progress-glow"><span className="stat-label">התקדמות כללית</span><span className="stat-number">{completionRate}%</span><span className="stat-sub">{summary.pending} עדיין ממתינים</span></div>
+              <div className="stat-card"><span className="stat-label">טלפנים פעילים</span><span className="stat-number">{activeCallers}</span><span className="stat-sub">ממוצע {averageCalls} שיחות לטלפן</span></div>
+              <div className="stat-card danger-glow"><span className="stat-label">לא ענו / שגויים</span><span className="stat-number">{summary.noAnswer + summary.invalidNumber}</span><span className="stat-sub">דורש סבב טיפול נוסף</span></div>
             </div>
-            {pendingAdmins.length > 0 && (
-              <div className="table-card"><div className="table-card-header"><h2>בקשות מנהלים לאישור</h2></div>
-                {approvedAdminPasscode && <div className="result-banner success">הבקשה אושרה. קוד הגישה: <strong>{approvedAdminPasscode}</strong></div>}
-                <div className="table-responsive"><table className="admin-table"><thead><tr><th>שם</th><th>ארגון</th><th>טלפון</th><th>אימייל</th><th>פעולה</th></tr></thead><tbody>{pendingAdmins.map((admin) => <tr key={admin.id}><td>{admin.fullName}</td><td>{admin.organization}</td><td>{admin.phone}</td><td>{admin.email}</td><td><button type="button" className="table-action-btn" onClick={() => approveAdmin(admin.id)} disabled={loading}>אשר ושלח קוד</button></td></tr>)}</tbody></table></div>
-              </div>
-            )}
+
+            <div className="dashboard-grid">
+              <section className="insight-card chart-card">
+                <div className="insight-header"><h2>פילוח סטטוסים</h2><span>{completionRate}% הושלם</span></div>
+                <div className="donut-wrap">
+                  <div className="donut-chart" style={{ background: "conic-gradient(" + statusGradient + ")" }}><div><strong>{summary.totalCalled}</strong><span>טופלו</span></div></div>
+                  <div className="status-legend">{statusBreakdown.map((item) => <div key={item.label} className="legend-row"><span className="legend-dot" style={{ backgroundColor: item.color }}></span><span>{item.label}</span><strong>{item.value}</strong></div>)}</div>
+                </div>
+              </section>
+
+              <section className="insight-card leaderboard-card">
+                <div className="insight-header"><h2>תחרות טלפנים</h2><span>מדורג לפי הצלחות</span></div>
+                {topCallers.length === 0 ? <div className="empty-state">עדיין אין שיחות למדידה.</div> : <div className="leaderboard-list">{topCallers.map((caller, index) => <div className="leaderboard-row" key={caller.id}><div className="rank-badge">#{index + 1}</div><div className="leaderboard-main"><div><strong>{caller.name || "טלפן"}</strong><span>{caller.successCalls || 0} הצלחות · {caller.totalCalls || 0} שיחות</span></div><div className="mini-bar"><span style={{ width: ((caller.totalCalls || 0) / maxCallerCalls) * 100 + "%" }}></span></div></div><div className="score-pill">{caller.successRate || 0}%</div></div>)}</div>}
+              </section>
+            </div>
+
+            <section className="insight-card project-progress-card">
+              <div className="insight-header"><h2>התקדמות פרויקטים</h2><span>{projects.length} פרויקטים</span></div>
+              {topProjects.length === 0 ? <div className="empty-state">אין עדיין פרויקטים להצגה.</div> : <div className="project-progress-list">{topProjects.map((project) => { const done = percent(project.stats.totalCalled, project.stats.total); return <div className="project-progress-row" key={project.id}><div><strong>{project.name}</strong><span>{project.stats.totalCalled} מתוך {project.stats.total}</span></div><div className="wide-progress"><span style={{ width: done + "%" }}></span></div><b>{done}%</b></div>; })}</div>}
+            </section>
+
             <div className="table-card"><div className="table-card-header"><h2>טלפנים פעילים</h2></div>
-              {callers.length === 0 ? <div className="empty-state">אין טלפנים פעילים כרגע.</div> : <div className="table-responsive"><table className="admin-table"><thead><tr><th>טלפן</th><th>טלפון</th><th>שיחות</th><th>הצלחות</th><th>פרויקטים</th><th>שיחה אחרונה</th></tr></thead><tbody>{callers.map((caller) => <tr key={caller.id}><td className="caller-name-cell"><span className="avatar-small">{caller.name[0]}</span>{caller.name}</td><td>{caller.phone || "-"}</td><td>{caller.totalCalls || 0}</td><td className="success-cell">{caller.successCalls || 0}</td><td>{caller.projects?.map((project) => project.name).join(", ") || "-"}</td><td className="time-cell">{caller.lastCallTime ? new Date(caller.lastCallTime).toLocaleString("he-IL") : "-"}</td></tr>)}</tbody></table></div>}
+              {callers.length === 0 ? <div className="empty-state">אין טלפנים פעילים כרגע.</div> : <div className="table-responsive"><table className="admin-table"><thead><tr><th>דירוג</th><th>טלפן</th><th>טלפון</th><th>שיחות</th><th>הצלחות</th><th>אחוז הצלחה</th><th>פרויקטים</th><th>שיחה אחרונה</th></tr></thead><tbody>{[...callers].sort((a, b) => (b.successCalls || 0) - (a.successCalls || 0) || (b.totalCalls || 0) - (a.totalCalls || 0)).map((caller, index) => <tr key={caller.id}><td><span className="rank-badge table-rank">#{index + 1}</span></td><td className="caller-name-cell"><span className="avatar-small">{caller.name?.[0] || "?"}</span>{caller.name}</td><td>{caller.phone || "-"}</td><td>{caller.totalCalls || 0}</td><td className="success-cell">{caller.successCalls || 0}</td><td><span className="score-pill">{caller.successRate || 0}%</span></td><td>{caller.projects?.map((project) => project.name).join(", ") || "-"}</td><td className="time-cell">{caller.lastCallTime ? new Date(caller.lastCallTime).toLocaleString("he-IL") : "-"}</td></tr>)}</tbody></table></div>}
             </div>
           </div>
         )}

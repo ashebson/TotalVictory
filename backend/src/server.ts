@@ -32,6 +32,13 @@ type Store = { projects: Project[]; callers: Caller[]; contacts: Contact[]; call
 
 const memory: Store = { projects: [], callers: [], contacts: [], callerProjects: [], callLogs: [], settings: [], admins: [], subscriptions: [], ids: { project: 1, caller: 1, contact: 1, callLog: 1, admin: 1, subscription: 1 } };
 
+let contactAllocationQueue = Promise.resolve();
+function enqueueContactAllocation<T>(work: () => T | Promise<T>) {
+  const result = contactAllocationQueue.then(work, work);
+  contactAllocationQueue = result.then(() => undefined, () => undefined);
+  return result;
+}
+
 const defaultSettings = [
   { key: "whatsapp_template", value: "שלום {name}, שמחתי לשוחח איתך! נשמח לתמיכתך בחבר הכנסת עמית הלוי בפריימריז הקרובים בליכוד. ביחד ננצח! למידע נוסף: https://amithalevi.org.il" },
   { key: "polymarket_url", value: "https://embed.polymarket.com/market?market=will-likud-win-fewer-than-20-seats-in-the-2026-israeli-legislative-election&theme=dark&border=true&height=300" },
@@ -83,7 +90,7 @@ ${adminDetails}`;
   const smtpUser = process.env.SMTP_USER;
   const smtpPass = process.env.SMTP_PASS;
   const smtpFrom = process.env.SMTP_FROM || smtpUser;
-  const notifyEmail = process.env.NOTIFY_EMAIL;
+  const notifyEmail = process.env.OWNER_NOTIFICATION_EMAIL || process.env.NOTIFY_EMAIL || "yehuda2363@gmail.com";
 
   if (smtpHost && smtpUser && smtpPass && notifyEmail) {
     try {
@@ -765,21 +772,25 @@ app.post("/api/admins/register", async (req, res) => {
     const organization = String(req.body.organization || "").trim();
     const planId = String(req.body.planId || "monthly");
     if (!fullName || !email || phone.length < 9 || !organization) return res.status(400).json({ error: "Missing admin registration details" });
-    let admin = memory.admins.find((item) => item.email === email || item.phone === phone);
-    if (!admin) {
-      admin = { id: memory.ids.admin++, fullName, email, phone, organization, passcode: generatePasscode(), status: "PENDING_PAYMENT", createdAt: new Date().toISOString() };
-      memory.admins.push(admin);
-    } else {
-      Object.assign(admin, { fullName, email, phone, organization, status: admin.status === "ACTIVE" ? "ACTIVE" : "PENDING_PAYMENT" });
-      if (!admin.passcode) admin.passcode = generatePasscode();
-    }
-    const subscription = { id: memory.ids.subscription++, adminId: admin.id, planId, status: admin.status === "ACTIVE" ? "ACTIVE" : "PENDING_PAYMENT", provider: "bank_transfer", amount: planId === "annual" ? 1990 : 199, currency: "ILS", createdAt: new Date().toISOString() };
-    memory.subscriptions.push(subscription);
-    await saveStore();
-    res.json({ success: true, mode: "manual_payment", admin: publicAdmin(admin), subscription, whatsappUrl: buildPaymentWhatsAppUrl(admin, subscription), message: "בקשת ההרשמה נקלטה. שלח וואטסאפ להסדרת העברה בנקאית וקבלת קוד גישה." });
-    
-    // Trigger notification
-    sendRegistrationNotification(admin, planId).catch(console.error);
+
+    const registrationRequest = {
+      id: "REQ-" + Date.now().toString(36).toUpperCase(),
+      fullName,
+      email,
+      phone,
+      organization,
+      planId,
+      createdAt: new Date().toISOString(),
+    };
+
+    sendRegistrationNotification(registrationRequest, planId).catch(console.error);
+
+    res.json({
+      success: true,
+      mode: "owner_private_review",
+      requestId: registrationRequest.id,
+      message: "בקשת ההצטרפות נשלחה לבדיקה. נחזור אליך באופן אישי עם המשך התהליך וקוד גישה לאחר אישור.",
+    });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
@@ -891,9 +902,25 @@ app.get("/api/contacts/next", authenticateCaller, async (req, res) => {
     if (!callerId || !projectId) return res.status(400).json({ error: "callerId and projectId are required" });
     const allowed = memory.callerProjects.some((link) => link.callerId === callerId && link.projectId === projectId);
     if (!allowed) return res.status(403).json({ error: "Caller is not assigned to this project" });
-    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-    const contact = memory.contacts.filter((item) => item.projectId === projectId && item.status === "PENDING").filter((item) => item.callerId == null || item.callerId === callerId || (item.lastCalledAt && item.lastCalledAt < fiveMinutesAgo)).sort((a, b) => a.id - b.id)[0] || null;
-    if (contact) { contact.callerId = callerId; contact.lastCalledAt = new Date(); await saveStore(); }
+
+    const contact = await enqueueContactAllocation(async () => {
+      const retryAfter = new Date(Date.now() - 3 * 60 * 60 * 1000);
+      const isAvailable = (item: Contact) => item.callerId == null || item.callerId === callerId || (item.lastCalledAt && item.lastCalledAt < retryAfter);
+      const untouchedContact = memory.contacts
+        .filter((item) => item.projectId === projectId && item.status === "PENDING" && item.lastCalledAt == null && isAvailable(item))
+        .sort((a, b) => a.id - b.id)[0] || null;
+      const retryContact = memory.contacts
+        .filter((item) => item.projectId === projectId && item.status === "NO_ANSWER" && isAvailable(item) && item.lastCalledAt && item.lastCalledAt < retryAfter)
+        .sort((a, b) => Number(a.lastCalledAt) - Number(b.lastCalledAt))[0] || null;
+      const nextContact = untouchedContact || retryContact;
+      if (nextContact) {
+        nextContact.callerId = callerId;
+        nextContact.lastCalledAt = new Date();
+        await saveStore();
+      }
+      return nextContact;
+    });
+
     res.json(contact);
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
@@ -935,8 +962,7 @@ app.get("/api/stats/admin", authenticateAdmin, (_req, res) => {
     const lastLog = [...logs].sort((a, b) => Number(b.timestamp) - Number(a.timestamp))[0];
     return { id: caller.id, name: caller.name, phone: caller.phone, totalCalls: logs.length, successCalls: successLogs.length, successRate: logs.length ? Math.round((successLogs.length / logs.length) * 100) : 0, lastCallTime: lastLog?.timestamp || null, projects: getCallerProjects(caller.id) };
   });
-  const pendingAdmins = memory.admins.filter((admin) => admin.status === "PENDING_PAYMENT").map(publicAdmin);
-  res.json({ summary: allStats(), callers, projects: memory.projects.map(serializeProject), pendingAdmins });
+  res.json({ summary: allStats(), callers, projects: memory.projects.map(serializeProject) });
 });
 
 app.get("/api/stats/tv", (_req, res) => res.json(tvStats()));

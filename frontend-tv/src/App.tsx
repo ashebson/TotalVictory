@@ -2,7 +2,9 @@ import { useState, useEffect, useRef } from "react";
 import { io } from "socket.io-client";
 import "./App.css";
 
-const API_URL = window.location.protocol + "//" + window.location.hostname + ":5001";
+const PUBLIC_API_URL = "https://total-victory.onrender.com";
+const LOCAL_API_URL = window.location.protocol + "//" + window.location.hostname + ":5001";
+const API_URL = (import.meta.env.VITE_API_URL || (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" ? LOCAL_API_URL : PUBLIC_API_URL)).replace(/\/$/, "");
 
 interface LeaderboardEntry {
   id: number;

@@ -17,7 +17,8 @@ const defaultCallStatusOptions: CallStatusOption[] = [
   { id: "NOT_INTERESTED", label: "לא מעוניין", active: true, className: "no-interest" },
   { id: "NO_ANSWER", label: "אין מענה", active: true, className: "no-answer" },
   { id: "INVALID_NUMBER", label: "מספר שגוי", active: true, className: "invalid" },
-];
+];
+
 
 const emptySummary: Summary = { total: 0, pending: 0, success: 0, notInterested: 0, noAnswer: 0, invalidNumber: 0, totalCalled: 0 };
 
@@ -27,17 +28,19 @@ export default function App() {
   const [passcodeError, setPasscodeError] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [registerForm, setRegisterForm] = useState({ fullName: "", email: "", phone: "", organization: "", planId: "monthly" });
-  const [registrationRequest, setRegistrationRequest] = useState<{ message: string } | null>(null);
+  const [registrationRequest, setRegistrationRequest] = useState<{ message: string } | null>(null);
+
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const [summary, setSummary] = useState<Summary>(emptySummary);
   const [callers, setCallers] = useState<Caller[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+
   const [loading, setLoading] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadResult, setUploadResult] = useState<string | null>(null);
   const [callerPhoneInputs, setCallerPhoneInputs] = useState<Record<number, string>>({});
-  const [settings, setSettings] = useState({ win_percentage: "74.8", target_calls: "5000", polymarket_url: "https://polymarket.com", whatsapp_template: "" });
+  const [settings, setSettings] = useState({ target_calls: "5000", whatsapp_template: "" });
   const [callStatusOptions, setCallStatusOptions] = useState<CallStatusOption[]>(defaultCallStatusOptions);
   const [settingsSaved, setSettingsSaved] = useState(false);
 
@@ -76,14 +79,15 @@ export default function App() {
     const data = await res.json();
     setSummary(data.summary || emptySummary);
     setCallers(data.callers || []);
-    setProjects(data.projects || []);
+    setProjects(data.projects || []);
+
   };
 
   const fetchSettings = async () => {
     const res = await fetch(API_URL + "/api/settings", { headers: getAdminHeaders() });
     if (!res.ok) return;
     const data = await res.json();
-    setSettings({ win_percentage: data.win_percentage || "74.8", target_calls: data.target_calls || "5000", polymarket_url: data.polymarket_url || "https://polymarket.com", whatsapp_template: data.whatsapp_template || "" });
+    setSettings({ target_calls: data.target_calls || "5000", whatsapp_template: data.whatsapp_template || "" });
     try {
       const parsed = JSON.parse(data.call_status_options || "[]");
       const byId = new Map(parsed.map((item: CallStatusOption) => [item.id, item]));
@@ -384,8 +388,8 @@ export default function App() {
             <div className="pane-header"><h1>הגדרות</h1><p>הגדרות כלליות של הודעות, תצוגה וסימוני שיחה.</p></div>
             <form onSubmit={handleSaveSettings} className="settings-form">
               <div className="settings-section"><h3>תבנית הודעת וואטסאפ</h3><textarea rows={4} value={settings.whatsapp_template} onChange={(e) => setSettings({ ...settings, whatsapp_template: e.target.value })} placeholder="שלום {name}..." /></div>
-              <div className="settings-section-row"><div className="settings-field"><label>אחוז זכייה התחלתי</label><input type="number" value={settings.win_percentage} onChange={(e) => setSettings({ ...settings, win_percentage: e.target.value })} /></div><div className="settings-field"><label>יעד שיחות</label><input type="number" value={settings.target_calls} onChange={(e) => setSettings({ ...settings, target_calls: e.target.value })} /></div></div>
-              <div className="settings-section"><label>כתובת Polymarket</label><input value={settings.polymarket_url} onChange={(e) => setSettings({ ...settings, polymarket_url: e.target.value })} /></div>
+              <div className="settings-section"><label>יעד שיחות</label><input type="number" value={settings.target_calls} onChange={(e) => setSettings({ ...settings, target_calls: e.target.value })} /></div>
+              <div className="settings-section owner-export-settings"><h3>נרשמים כמנהלי מערכת</h3><p>רק קוד הבעלים הראשי יכול להוריד את רשימת בקשות ההרשמה.</p><div className="sheet-actions"><a href={API_URL + "/api/admins/registration-requests.csv?passcode=" + encodeURIComponent(sessionStorage.getItem("admin_passcode") || passcode)} target="_blank" rel="noreferrer">הורד רשימת נרשמים CSV</a></div></div>
               <div className="settings-section call-status-settings">
                 <div className="settings-section-title"><h3>אפשרויות סימון לאחר שיחה</h3><button type="button" onClick={resetCallStatusOptions}>איפוס לברירת מחדל</button></div>
                 <p>אפשר לשנות את שם הכפתורים ולהסתיר אפשרות שאינה בשימוש. המשמעות המערכתית נשארת קבועה כדי שהדוחות והסבבים החוזרים יישארו מסודרים.</p>

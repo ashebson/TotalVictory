@@ -4,6 +4,7 @@ import http from "http";
 import { Server } from "socket.io";
 import cors from "cors";
 import { PrismaClient } from "@prisma/client";
+import * as XLSX from "xlsx";
 import zlib from "zlib";
 import path from "path";
 import fs from "fs/promises";
@@ -280,7 +281,7 @@ function csvEscape(value: unknown) {
   const text = String(value ?? "");
   return /[",\n\r]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
 }
-function projectExportCsv(projectId: number) {
+function projectExportRows(projectId: number) {
   const project = memory.projects.find((item) => item.id === projectId);
   const projectContacts = memory.contacts.filter((contact) => contact.projectId === projectId).sort((a, b) => a.id - b.id);
   const originalHeaders = Array.from(new Set([
@@ -301,7 +302,22 @@ function projectExportCsv(projectId: number) {
       contact.lastCalledAt ? contact.lastCalledAt.toLocaleDateString("he-IL") : "",
     ];
   });
+  return { headers, rows };
+}
+
+function projectExportCsv(projectId: number) {
+  const { headers, rows } = projectExportRows(projectId);
   return [headers, ...rows].map((row) => row.map(csvEscape).join(",")).join("\n");
+}
+
+function projectExportXlsx(projectId: number) {
+  const { headers, rows } = projectExportRows(projectId);
+  const workbook = XLSX.utils.book_new();
+  const table = [headers, ...rows].map((row) => row.map((value) => String(value ?? "")));
+  const worksheet = XLSX.utils.aoa_to_sheet(table);
+  worksheet["!cols"] = headers.map((header) => ({ wch: Math.min(45, Math.max(12, String(header || "").length + 4)) }));
+  XLSX.utils.book_append_sheet(workbook, worksheet, "נתונים");
+  return XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
 }
 function parseUploadedContacts(payload: any) {
   if (Array.isArray(payload.contacts)) return payload.contacts;
@@ -657,6 +673,16 @@ app.get("/api/projects/:projectId/export.csv", (req, res) => {
   res.send("\uFEFF" + projectExportCsv(projectId));
 });
 
+
+app.get("/api/projects/:projectId/export.xlsx", (req, res) => {
+  const projectId = Number(req.params.projectId);
+  const project = memory.projects.find((item) => item.id === projectId);
+  if (!project) return res.status(404).send("Project not found");
+  const workbook = projectExportXlsx(projectId);
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", "attachment; filename=project-" + projectId + ".xlsx");
+  res.send(workbook);
+});
 
 app.delete("/api/projects/:projectId", (req, res) => {
   const projectId = Number(req.params.projectId);

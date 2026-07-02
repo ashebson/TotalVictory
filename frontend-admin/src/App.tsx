@@ -187,7 +187,7 @@ export default function App() {
   };
 
   const deleteProject = async (project: Project) => {
-    const approved = window.confirm("להעביר את הפרויקט "" + project.name + "" לארכיון? הנתונים, האקסל, הסטטוסים והערות הטלפנים יישמרו וניתן יהיה לשחזר אותם.");
+    const approved = window.confirm("להעביר את הפרויקט '" + project.name + "' לארכיון? הנתונים, האקסל, הסטטוסים והערות הטלפנים יישמרו וניתן יהיה לשחזר אותם.");
     if (!approved) return;
     setLoading(true);
     try {

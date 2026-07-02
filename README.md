@@ -17,7 +17,7 @@ The project is split into one backend service, three React frontends, and a Post
 ## Features
 
 - Admin registration and passcode-based login
-- Optional Shopify checkout/webhook flow for paid admin subscriptions
+- Manual admin subscription requests with WhatsApp and bank-transfer approval
 - Caller login by name and phone number
 - Project creation from CSV or XLSX contact files
 - Automatic mapping for Hebrew and English contact columns
@@ -117,7 +117,7 @@ npm install
 npm run dev
 ```
 
-Vite will print the local URL for each app. The apps build the API URL from the current hostname and port `5001`, so keep the backend running on `5001`.
+Vite will print the local URL for each app. Set `VITE_API_URL` in each frontend environment to the public backend URL, for example `https://total-victory.onrender.com`. Without it, local development falls back to the current hostname on port `5001`.
 
 ## Environment Variables
 
@@ -128,11 +128,7 @@ Backend configuration lives in `backend/.env`.
 | `DATABASE_URL` | Yes when using Postgres | Prisma PostgreSQL connection string |
 | `PORT` | No | Backend port, defaults to `5001` in this repo |
 | `USE_MEMORY_DB` | No | Set to `true` to use `backend/data/local-db.json` instead of Prisma/Postgres |
-| `SHOPIFY_STORE_DOMAIN` | No | Shopify store domain for paid admin signup |
-| `SHOPIFY_STOREFRONT_TOKEN` | No | Shopify Storefront API token |
-| `SHOPIFY_MONTHLY_VARIANT_ID` | No | Shopify monthly subscription variant ID |
-| `SHOPIFY_ANNUAL_VARIANT_ID` | No | Shopify annual subscription variant ID |
-| `SHOPIFY_WEBHOOK_SECRET` | Required for Shopify webhooks | Secret used to verify paid-order webhook signatures |
+| `PAYMENT_WHATSAPP_PHONE` | No | WhatsApp number that receives new admin subscription requests |
 
 ## Data Imports
 
@@ -144,7 +140,8 @@ Recognized optional columns include city, sector/group, family size, and notes. 
 
 - `POST /api/login` - caller login or creation
 - `POST /api/admins/validate` - validate admin passcode
-- `POST /api/admins/register` - create an admin subscription
+- `POST /api/admins/register` - create a pending manual-payment admin subscription request
+- `POST /api/admins/:adminId/approve` - approve a paid admin request and generate the WhatsApp passcode message
 - `GET /api/subscriptions/plans` - list subscription plans
 - `GET /api/projects` - list projects
 - `POST /api/projects/upload` - upload CSV/XLSX project contacts
@@ -159,7 +156,7 @@ Recognized optional columns include city, sector/group, family size, and notes. 
 - `GET /api/stats/tv` - TV display stats
 - `GET /api/settings` - read settings
 - `POST /api/settings` - update settings
-- `POST /api/shopify/webhooks/orders-paid` - Shopify paid-order webhook
+
 
 ## Project Structure
 

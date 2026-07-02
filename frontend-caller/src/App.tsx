@@ -4,6 +4,7 @@ import "./App.css";
 const PUBLIC_API_URL = "https://total-victory.onrender.com";
 const LOCAL_API_URL = window.location.protocol + "//" + window.location.hostname + ":5001";
 const API_URL = (import.meta.env.VITE_API_URL || (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" ? LOCAL_API_URL : PUBLIC_API_URL)).replace(/\/$/, "");
+const DEFAULT_WHATSAPP_TEMPLATE = "שלום {שם פרטי}, דיברנו עכשיו בטלפון. נשמח לתמיכתך בחבר הכנסת עמית הלוי. ביחד ננצח!";
 
 type Project = {
   id: number;
@@ -15,6 +16,7 @@ type Caller = {
   id: number;
   name: string;
   phone: string;
+  whatsappTemplate?: string | null;
   projects?: Project[];
 };
 
@@ -43,7 +45,10 @@ export default function App() {
   const [feedTransition, setFeedTransition] = useState<"idle" | "exit" | "enter">("idle");
   const [statusSelection, setStatusSelection] = useState<string | null>(null);
   const [callNotes, setCallNotes] = useState("");
-  const [whatsappTemplate, setWhatsappTemplate] = useState("");
+  const [globalWhatsappTemplate, setGlobalWhatsappTemplate] = useState(DEFAULT_WHATSAPP_TEMPLATE);
+  const [personalWhatsappTemplate, setPersonalWhatsappTemplate] = useState("");
+  const [showTemplateSettings, setShowTemplateSettings] = useState(false);
+  const [templateSaved, setTemplateSaved] = useState(false);
   const [sessionCount, setSessionCount] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -71,7 +76,7 @@ export default function App() {
       const res = await fetch(API_URL + "/api/settings");
       if (res.ok) {
         const settings = await res.json();
-        setWhatsappTemplate(settings.whatsapp_template || "");
+        setGlobalWhatsappTemplate(settings.whatsapp_template || DEFAULT_WHATSAPP_TEMPLATE);
       }
     } catch {
       // UI can still work without a WhatsApp template.
@@ -129,6 +134,7 @@ export default function App() {
       if (!res.ok) throw new Error("restore failed");
       const data = await res.json();
       setCaller(data);
+      setPersonalWhatsappTemplate(data.whatsappTemplate || "");
       setProjects(data.projects || []);
       localStorage.setItem("total_victory_caller", JSON.stringify({ id: data.id, name: data.name, phone: data.phone }));
       const savedProjectId = Number(localStorage.getItem("total_victory_project_id"));
@@ -158,6 +164,7 @@ export default function App() {
       if (!res.ok) throw new Error("login failed");
       const data = await res.json();
       setCaller(data);
+      setPersonalWhatsappTemplate(data.whatsappTemplate || "");
       setProjects(data.projects || []);
       localStorage.setItem("total_victory_caller", JSON.stringify({ id: data.id, name: data.name, phone: data.phone }));
       if ((data.projects || []).length === 1) chooseProject(data.projects[0]);
@@ -177,6 +184,30 @@ export default function App() {
     setCurrentContact(null);
     setIsSwipedRight(false);
     setSessionCount(0);
+    setShowTemplateSettings(false);
+  };
+
+  const saveTemplateSettings = async () => {
+    if (!caller) return;
+    setLoading(true);
+    setTemplateSaved(false);
+    try {
+      const res = await fetch(API_URL + "/api/callers/" + caller.id + "/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ whatsappTemplate: personalWhatsappTemplate }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "save failed");
+      setCaller(data.caller);
+      setPersonalWhatsappTemplate(data.caller?.whatsappTemplate || "");
+      setTemplateSaved(true);
+      window.setTimeout(() => setTemplateSaved(false), 2500);
+    } catch {
+      alert("שגיאה בשמירת הודעת הוואטסאפ האישית.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const triggerSwipe = (_direction: "right") => {
@@ -218,9 +249,25 @@ export default function App() {
     }
   };
 
+  const getFirstName = (fullName: string) => fullName.trim().split(/\s+/)[0] || fullName.trim();
+
+  const buildWhatsAppText = () => {
+    if (!currentContact) return "";
+    const fullName = currentContact.name;
+    const firstName = getFirstName(fullName);
+    const template = (personalWhatsappTemplate.trim() || globalWhatsappTemplate || DEFAULT_WHATSAPP_TEMPLATE);
+    return template
+      .replace(/\{name\}/g, fullName)
+      .replace(/\{fullName\}/g, fullName)
+      .replace(/\{שם מלא\}/g, fullName)
+      .replace(/\{שם\}/g, fullName)
+      .replace(/\{firstName\}/g, firstName)
+      .replace(/\{שם פרטי\}/g, firstName);
+  };
+
   const getWhatsAppLink = () => {
     if (!currentContact) return "#";
-    const text = whatsappTemplate.replace(/{name}/g, currentContact.name);
+    const text = buildWhatsAppText();
     let phone = currentContact.phone.replace(/\D/g, "");
     if (phone.startsWith("0")) phone = "972" + phone.substring(1);
     return "https://api.whatsapp.com/send?phone=" + phone + "&text=" + encodeURIComponent(text);
@@ -290,10 +337,19 @@ export default function App() {
           <div className="user-avatar">{caller.name[0]}</div>
           <div><h3>{caller.name}</h3><span className="session-stats">{selectedProject.name} · {caller.phone} · שיחות: {sessionCount}</span></div>
         </div>
-        <button onClick={() => setSelectedProject(null)} className="btn-logout">פרויקט</button>
+        <div className="caller-header-actions"><button onClick={() => setShowTemplateSettings((value) => !value)} className="btn-logout">הודעה</button><button onClick={() => setSelectedProject(null)} className="btn-logout">פרויקט</button></div>
       </header>
       <main className="app-main">
         {errorMsg && <div className="error-banner">{errorMsg}</div>}
+        {showTemplateSettings && (
+          <section className="template-settings card-enter-anim">
+            <div><h3>הודעת וואטסאפ אישית</h3><p>התבנית נשמרת לפי מספר הטלפון שלך ומשמשת אחרי שיחה מוצלחת.</p></div>
+            <textarea rows={4} maxLength={1000} value={personalWhatsappTemplate} onChange={(e) => setPersonalWhatsappTemplate(e.target.value)} placeholder={DEFAULT_WHATSAPP_TEMPLATE} />
+            <small>משתנים זמינים: {"{שם פרטי}"}, {"{שם מלא}"}, {"{name}"}</small>
+            {templateSaved && <span className="template-saved">נשמר.</span>}
+            <button type="button" onClick={saveTemplateSettings} className="btn-save-template" disabled={loading}>שמור הודעה אישית</button>
+          </section>
+        )}
         {loading && !currentContact ? (
           <div className="loader-container"><div className="spinner"></div><p>טוען את איש הקשר הבא...</p></div>
         ) : !currentContact ? (
@@ -335,7 +391,7 @@ export default function App() {
                     <textarea id="callNotes" rows={3} maxLength={500} value={callNotes} onChange={(e) => setCallNotes(e.target.value)} placeholder="לדוגמה: ביקש לחזור בערב, תומך אך רוצה תזכורת..." />
                     <span>{callNotes.length}/500</span>
                   </div>
-                  {statusSelection === "SUCCESS" && <a href={getWhatsAppLink()} target="_blank" rel="noopener noreferrer" className="btn-whatsapp">שלח הודעת וואטסאפ</a>}
+                  {statusSelection === "SUCCESS" && <><div className="whatsapp-preview"><span>תצוגה מקדימה:</span><p>{buildWhatsAppText()}</p></div><a href={getWhatsAppLink()} target="_blank" rel="noopener noreferrer" className="btn-whatsapp">שלח הודעת וואטסאפ</a></>}
                   <button onClick={handleSubmitStatus} className="btn-submit-call" disabled={!statusSelection || loading || feedTransition !== "idle"}>{loading ? "מעביר לבא בתור..." : "שמור והמשך לשיחה הבאה"}</button>
                 </div>
               </div>

@@ -22,6 +22,7 @@ model Caller {
   id             Int             @id @default(autoincrement())
   name           String
   phone          String          @unique
+  whatsappTemplate String?
   createdAt      DateTime        @default(now())
   contacts       Contact[]
   callLogs       CallLog[]

@@ -7,7 +7,6 @@ import { PrismaClient } from "@prisma/client";
 import zlib from "zlib";
 import path from "path";
 import fs from "fs/promises";
-import crypto from "crypto";
 
 const DATA_FILE = path.resolve(process.cwd(), "data/local-db.json");
 
@@ -20,36 +19,6 @@ const io = new Server(server, {
 });
 
 app.use(cors());
-
-app.post("/api/shopify/webhooks/orders-paid", express.raw({ type: "*/*" }), (req, res) => {
-  const secret = process.env.SHOPIFY_WEBHOOK_SECRET;
-  if (!secret) return res.status(503).send("Shopify webhook secret is not configured");
-  const header = String(req.headers["x-shopify-hmac-sha256"] || "");
-  const digest = crypto.createHmac("sha256", secret).update(req.body as Buffer).digest("base64");
-  const digestBuffer = Buffer.from(digest, "base64");
-  const headerBuffer = Buffer.from(header, "base64");
-  const valid = headerBuffer.length === digestBuffer.length && crypto.timingSafeEqual(digestBuffer, headerBuffer);
-  if (!valid) return res.status(401).send("Invalid Shopify signature");
-  try {
-    const order = JSON.parse((req.body as Buffer).toString("utf8"));
-    const noteAttributes = Array.isArray(order.note_attributes) ? order.note_attributes : [];
-    const getAttr = (name: string) => noteAttributes.find((item: any) => item.name === name || item.key === name)?.value;
-    const adminId = Number(getAttr("adminId"));
-    const subscriptionId = Number(getAttr("subscriptionId"));
-    const admin = memory.admins.find((item) => item.id === adminId);
-    const subscription = memory.subscriptions.find((item) => item.id === subscriptionId);
-    if (admin) admin.status = "ACTIVE";
-    if (subscription) {
-      subscription.status = "ACTIVE";
-      subscription.shopifyOrderId = order.id || order.admin_graphql_api_id || null;
-      subscription.paidAt = new Date().toISOString();
-    }
-    saveMemoryStore();
-    res.status(200).send("ok");
-  } catch (error: any) {
-    res.status(400).send(error.message || "Invalid Shopify payload");
-  }
-});
 
 app.use(express.json({ limit: "50mb" }));
 
@@ -411,6 +380,78 @@ function getCallerProjects(callerId: number) {
   return memory.projects.filter((project) => projectIds.includes(project.id)).map(serializeProject);
 }
 
+function nextId(items: { id: number }[]) {
+  return items.reduce((max, item) => Math.max(max, Number(item.id) || 0), 0) + 1;
+}
+
+async function loadPrismaStore() {
+  if (!prisma) return;
+  const [projects, callers, contacts, callerProjects, callLogs, settings, admins, subscriptions] = await Promise.all([
+    prisma.project.findMany({ orderBy: { id: "asc" } }),
+    prisma.caller.findMany({ orderBy: { id: "asc" } }),
+    prisma.contact.findMany({ orderBy: { id: "asc" } }),
+    prisma.callerProject.findMany({ orderBy: { id: "asc" } }),
+    prisma.callLog.findMany({ orderBy: { id: "asc" } }),
+    prisma.setting.findMany(),
+    prisma.admin.findMany({ orderBy: { id: "asc" } }),
+    prisma.subscription.findMany({ orderBy: { id: "asc" } }),
+  ]);
+  memory.projects = projects.map((item: any) => ({ ...item, sourceHeaders: Array.isArray(item.sourceHeaders) ? item.sourceHeaders : [], createdAt: new Date(item.createdAt) }));
+  memory.callers = callers.map((item: any) => ({ ...item, phone: cleanPhone(item.phone), createdAt: new Date(item.createdAt) }));
+  memory.contacts = contacts.map((item: any) => ({ ...item, sourceData: item.sourceData || null, lastCalledAt: item.lastCalledAt ? new Date(item.lastCalledAt) : null }));
+  memory.callerProjects = callerProjects.map((item: any) => ({ callerId: item.callerId, projectId: item.projectId }));
+  memory.callLogs = callLogs.map((item: any) => ({ ...item, timestamp: new Date(item.timestamp) }));
+  memory.settings = settings.map((item: any) => ({ key: item.key, value: item.value }));
+  memory.admins = admins.map((item: any) => ({ ...item, createdAt: new Date(item.createdAt).toISOString() }));
+  memory.subscriptions = subscriptions.map((item: any) => ({ ...item, createdAt: new Date(item.createdAt).toISOString() }));
+  memory.ids = {
+    project: nextId(memory.projects),
+    caller: nextId(memory.callers),
+    contact: nextId(memory.contacts),
+    callLog: nextId(memory.callLogs),
+    admin: nextId(memory.admins),
+    subscription: nextId(memory.subscriptions),
+  };
+}
+
+let prismaSaveQueue = Promise.resolve();
+
+async function persistPrismaStore() {
+  if (!prisma) return;
+  const projects = memory.projects.map((item) => ({ id: item.id, name: item.name, sourceFileName: item.sourceFileName || null, sourceHeaders: item.sourceHeaders || [], createdAt: new Date(item.createdAt) }));
+  const callers = memory.callers.map((item) => ({ id: item.id, name: item.name || "", phone: cleanPhone(item.phone), createdAt: new Date(item.createdAt) }));
+  const admins = memory.admins.map((item) => ({ id: item.id, fullName: item.fullName || "", email: item.email || "", phone: cleanPhone(item.phone), organization: item.organization || "", passcode: item.passcode || generatePasscode(), status: item.status || "ACTIVE", createdAt: new Date(item.createdAt || Date.now()) }));
+  const settings = memory.settings.map((item) => ({ key: item.key, value: item.value }));
+  const contacts = memory.contacts.map((item) => ({ id: item.id, projectId: item.projectId, name: item.name, phone: cleanPhone(item.phone), city: item.city || null, sector: item.sector || null, familySize: item.familySize ?? null, notes: item.notes || null, callNotes: item.callNotes || null, sourceData: item.sourceData || {}, status: item.status || "PENDING", lastCalledAt: item.lastCalledAt ? new Date(item.lastCalledAt) : null, callerId: item.callerId || null }));
+  const callerProjects = memory.callerProjects.map((item) => ({ callerId: item.callerId, projectId: item.projectId }));
+  const subscriptions = memory.subscriptions.map((item) => ({ id: item.id, adminId: item.adminId, planId: item.planId || "monthly", status: item.status || "ACTIVE", provider: item.provider || "bank_transfer", amount: Number(item.amount) || 0, currency: item.currency || "ILS", createdAt: new Date(item.createdAt || Date.now()) }));
+  const callLogs = memory.callLogs.map((item) => ({ id: item.id, projectId: item.projectId, callerId: item.callerId, contactId: item.contactId, status: item.status, timestamp: new Date(item.timestamp) }));
+
+  await prisma.$transaction(async (tx) => {
+    await tx.callLog.deleteMany();
+    await tx.callerProject.deleteMany();
+    await tx.contact.deleteMany();
+    await tx.subscription.deleteMany();
+    await tx.admin.deleteMany();
+    await tx.caller.deleteMany();
+    await tx.project.deleteMany();
+    await tx.setting.deleteMany();
+    if (projects.length) await tx.project.createMany({ data: projects });
+    if (callers.length) await tx.caller.createMany({ data: callers });
+    if (admins.length) await tx.admin.createMany({ data: admins });
+    if (settings.length) await tx.setting.createMany({ data: settings });
+    if (contacts.length) await tx.contact.createMany({ data: contacts });
+    if (callerProjects.length) await tx.callerProject.createMany({ data: callerProjects });
+    if (subscriptions.length) await tx.subscription.createMany({ data: subscriptions });
+    if (callLogs.length) await tx.callLog.createMany({ data: callLogs });
+  }, { timeout: 30000 });
+}
+
+function savePrismaStore() {
+  prismaSaveQueue = prismaSaveQueue.then(() => persistPrismaStore()).catch((error) => console.error("Error saving Prisma data:", error));
+  return prismaSaveQueue;
+}
+
 async function loadMemoryStore() {
   if (process.env.USE_MEMORY_DB !== "true") return;
   try {
@@ -485,43 +526,39 @@ function publicAdmin(admin: any) {
   return safe;
 }
 
-function getShopifyVariantId(planId: string) {
-  return planId === "annual" ? process.env.SHOPIFY_ANNUAL_VARIANT_ID : process.env.SHOPIFY_MONTHLY_VARIANT_ID;
+function planLabel(planId: string) {
+  return planId === "annual" ? 'שנתי - 1,990 ש"ח' : 'חודשי - 199 ש"ח';
 }
 
-function shopifyConfigured(planId: string) {
-  return Boolean(process.env.SHOPIFY_STORE_DOMAIN && process.env.SHOPIFY_STOREFRONT_TOKEN && getShopifyVariantId(planId));
+function formatWhatsAppPhone(phone: string) {
+  const normalized = cleanPhone(phone);
+  if (!normalized) return "";
+  return normalized.startsWith("0") ? "972" + normalized.slice(1) : normalized;
 }
 
-async function createShopifyCheckout(input: { admin: any; subscription: any; planId: string; email: string; phone: string }) {
-  const domain = String(process.env.SHOPIFY_STORE_DOMAIN || "").replace(/^https?:\/\//, "").replace(/\/$/, "");
-  const token = process.env.SHOPIFY_STOREFRONT_TOKEN;
-  const variantId = getShopifyVariantId(input.planId);
-  if (!domain || !token || !variantId) return null;
-  const mutation = `mutation CreateCart($input: CartInput!) { cartCreate(input: $input) { cart { checkoutUrl } userErrors { field message } } }`;
-  const variables = {
-    input: {
-      lines: [{ merchandiseId: variantId, quantity: 1 }],
-      buyerIdentity: { email: input.email, phone: input.phone },
-      attributes: [
-        { key: "adminId", value: String(input.admin.id) },
-        { key: "subscriptionId", value: String(input.subscription.id) },
-        { key: "planId", value: input.planId },
-      ],
-    },
-  };
-  const response = await fetch("https://" + domain + "/api/2026-07/graphql.json", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Shopify-Storefront-Access-Token": token,
-    },
-    body: JSON.stringify({ query: mutation, variables }),
-  });
-  const data: any = await response.json();
-  const userErrors = data?.data?.cartCreate?.userErrors || [];
-  if (!response.ok || userErrors.length) throw new Error(userErrors[0]?.message || "Shopify checkout failed");
-  return data?.data?.cartCreate?.cart?.checkoutUrl || null;
+function buildPaymentRequestMessage(admin: any, subscription: any) {
+  return [
+    "שלום, נרשמתי למערכת מטה דיגיטלי ואני רוצה להסדיר תשלום בהעברה בנקאית.",
+    "שם: " + admin.fullName,
+    "ארגון: " + admin.organization,
+    "טלפון: " + admin.phone,
+    "אימייל: " + admin.email,
+    "מסלול: " + planLabel(subscription.planId),
+    "מספר בקשה: " + admin.id,
+    "לאחר ביצוע ההעברה אשמח לקבל קוד גישה בוואטסאפ."
+  ].join("\n");
+}
+
+function buildPaymentWhatsAppUrl(admin: any, subscription: any) {
+  const ownerPhone = formatWhatsAppPhone(process.env.PAYMENT_WHATSAPP_PHONE || "");
+  const message = buildPaymentRequestMessage(admin, subscription);
+  return "https://wa.me/" + ownerPhone + "?text=" + encodeURIComponent(message);
+}
+
+function buildPasscodeWhatsAppUrl(admin: any) {
+  const adminPhone = formatWhatsAppPhone(admin.phone || "");
+  const message = "שלום " + admin.fullName + ", המנוי שלך אושר. קוד הגישה למערכת הניהול: " + admin.passcode;
+  return "https://wa.me/" + adminPhone + "?text=" + encodeURIComponent(message);
 }
 
 io.on("connection", (socket) => { console.log("Client connected:", socket.id); socket.on("disconnect", () => console.log("Client disconnected:", socket.id)); });
@@ -562,23 +599,35 @@ app.post("/api/admins/register", async (req, res) => {
     const organization = String(req.body.organization || "").trim();
     const planId = String(req.body.planId || "monthly");
     if (!fullName || !email || phone.length < 9 || !organization) return res.status(400).json({ error: "Missing admin registration details" });
-    const useShopify = shopifyConfigured(planId);
     let admin = memory.admins.find((item) => item.email === email || item.phone === phone);
     if (!admin) {
-      admin = { id: memory.ids.admin++, fullName, email, phone, organization, passcode: generatePasscode(), status: useShopify ? "PENDING_PAYMENT" : "ACTIVE", createdAt: new Date().toISOString() };
+      admin = { id: memory.ids.admin++, fullName, email, phone, organization, passcode: generatePasscode(), status: "PENDING_PAYMENT", createdAt: new Date().toISOString() };
       memory.admins.push(admin);
     } else {
-      Object.assign(admin, { fullName, phone, organization, status: useShopify ? "PENDING_PAYMENT" : "ACTIVE" });
+      Object.assign(admin, { fullName, email, phone, organization, status: admin.status === "ACTIVE" ? "ACTIVE" : "PENDING_PAYMENT" });
+      if (!admin.passcode) admin.passcode = generatePasscode();
     }
-    const subscription = { id: memory.ids.subscription++, adminId: admin.id, planId, status: useShopify ? "PENDING_PAYMENT" : "ACTIVE", provider: useShopify ? "shopify" : "demo", amount: planId === "annual" ? 1990 : 199, currency: "ILS", createdAt: new Date().toISOString() };
+    const subscription = { id: memory.ids.subscription++, adminId: admin.id, planId, status: admin.status === "ACTIVE" ? "ACTIVE" : "PENDING_PAYMENT", provider: "bank_transfer", amount: planId === "annual" ? 1990 : 199, currency: "ILS", createdAt: new Date().toISOString() };
     memory.subscriptions.push(subscription);
-    if (useShopify) {
-      const checkoutUrl = await createShopifyCheckout({ admin, subscription, planId, email, phone: String(req.body.phone || "") });
-      saveMemoryStore();
-      return res.json({ success: true, mode: "shopify", admin: publicAdmin(admin), subscription, checkoutUrl });
+    await saveMemoryStore();
+    res.json({ success: true, mode: "manual_payment", admin: publicAdmin(admin), subscription, whatsappUrl: buildPaymentWhatsAppUrl(admin, subscription), message: "בקשת ההרשמה נקלטה. שלח וואטסאפ להסדרת העברה בנקאית וקבלת קוד גישה." });
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
+});
+
+app.post("/api/admins/:adminId/approve", async (req, res) => {
+  try {
+    const admin = memory.admins.find((item) => item.id === Number(req.params.adminId));
+    if (!admin) return res.status(404).json({ error: "Admin request not found" });
+    admin.status = "ACTIVE";
+    if (!admin.passcode) admin.passcode = generatePasscode();
+    const subscription = [...memory.subscriptions].reverse().find((item) => item.adminId === admin.id);
+    if (subscription) {
+      subscription.status = "ACTIVE";
+      subscription.provider = "bank_transfer";
+      subscription.paidAt = new Date().toISOString();
     }
-    saveMemoryStore();
-    res.json({ success: true, mode: "demo", admin: publicAdmin(admin), subscription, passcode: admin.passcode });
+    await saveMemoryStore();
+    res.json({ success: true, admin: publicAdmin(admin), passcode: admin.passcode, whatsappUrl: buildPasscodeWhatsAppUrl(admin) });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
@@ -690,7 +739,8 @@ app.get("/api/stats/admin", (_req, res) => {
     const lastLog = [...logs].sort((a, b) => Number(b.timestamp) - Number(a.timestamp))[0];
     return { id: caller.id, name: caller.name, phone: caller.phone, totalCalls: logs.length, successCalls: successLogs.length, successRate: logs.length ? Math.round((successLogs.length / logs.length) * 100) : 0, lastCallTime: lastLog?.timestamp || null, projects: getCallerProjects(caller.id) };
   });
-  res.json({ summary: allStats(), callers, projects: memory.projects.map(serializeProject) });
+  const pendingAdmins = memory.admins.filter((admin) => admin.status === "PENDING_PAYMENT").map(publicAdmin);
+  res.json({ summary: allStats(), callers, projects: memory.projects.map(serializeProject), pendingAdmins });
 });
 app.get("/api/stats/tv", (_req, res) => res.json(tvStats()));
 app.get("/api/settings", (_req, res) => res.json(Object.fromEntries(memory.settings.map((item) => [item.key, item.value]))));

@@ -1,12 +1,15 @@
 import React, { useEffect, useState } from "react";
 import "./App.css";
 
-const API_URL = window.location.protocol + "//" + window.location.hostname + ":5001";
+const PUBLIC_API_URL = "https://total-victory.onrender.com";
+const LOCAL_API_URL = window.location.protocol + "//" + window.location.hostname + ":5001";
+const API_URL = (import.meta.env.VITE_API_URL || (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" ? LOCAL_API_URL : PUBLIC_API_URL)).replace(/\/$/, "");
 
 type Tab = "dashboard" | "projects" | "settings";
 type Summary = { total: number; pending: number; success: number; notInterested: number; noAnswer: number; invalidNumber: number; totalCalled: number };
 type Caller = { id: number; name: string; phone?: string; totalCalls?: number; successCalls?: number; successRate?: number; lastCallTime?: string | null; projects?: Project[] };
 type Project = { id: number; name: string; sourceFileName?: string | null; createdAt: string; stats: Summary; callers: Caller[] };
+type PendingAdmin = { id: number; fullName: string; email: string; phone: string; organization: string; status: string; createdAt: string };
 
 const emptySummary: Summary = { total: 0, pending: 0, success: 0, notInterested: 0, noAnswer: 0, invalidNumber: 0, totalCalled: 0 };
 
@@ -16,11 +19,13 @@ export default function App() {
   const [passcodeError, setPasscodeError] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [registerForm, setRegisterForm] = useState({ fullName: "", email: "", phone: "", organization: "", planId: "monthly" });
-  const [newAdminPasscode, setNewAdminPasscode] = useState<string | null>(null);
+  const [registrationRequest, setRegistrationRequest] = useState<{ message: string; whatsappUrl: string } | null>(null);
+  const [approvedAdminPasscode, setApprovedAdminPasscode] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const [summary, setSummary] = useState<Summary>(emptySummary);
   const [callers, setCallers] = useState<Caller[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [pendingAdmins, setPendingAdmins] = useState<PendingAdmin[]>([]);
   const [loading, setLoading] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -45,6 +50,7 @@ export default function App() {
     setSummary(data.summary || emptySummary);
     setCallers(data.callers || []);
     setProjects(data.projects || []);
+    setPendingAdmins(data.pendingAdmins || []);
   };
 
   const fetchSettings = async () => {
@@ -74,7 +80,7 @@ export default function App() {
   const handleRegisterAdmin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setNewAdminPasscode(null);
+    setRegistrationRequest(null);
     try {
       const res = await fetch(API_URL + "/api/admins/register", {
         method: "POST",
@@ -83,14 +89,10 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "registration failed");
-      if (data.checkoutUrl) {
-        window.location.href = data.checkoutUrl;
-        return;
-      }
-      setNewAdminPasscode(data.passcode);
-      setPasscode(data.passcode);
+      setRegistrationRequest({ message: data.message || "בקשת ההרשמה נקלטה.", whatsappUrl: data.whatsappUrl || "" });
+      if (data.whatsappUrl) window.open(data.whatsappUrl, "_blank", "noopener,noreferrer");
     } catch {
-      alert("לא ניתן לפתוח מנוי מנהל כרגע.");
+      alert("לא ניתן לשלוח בקשת הרשמה כרגע.");
     } finally {
       setLoading(false);
     }
@@ -151,6 +153,23 @@ export default function App() {
     fetchData();
   };
 
+  const approveAdmin = async (adminId: number) => {
+    setLoading(true);
+    setApprovedAdminPasscode(null);
+    try {
+      const res = await fetch(API_URL + "/api/admins/" + adminId + "/approve", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "approval failed");
+      setApprovedAdminPasscode(data.passcode);
+      if (data.whatsappUrl) window.open(data.whatsappUrl, "_blank", "noopener,noreferrer");
+      fetchData();
+    } catch {
+      alert("לא ניתן לאשר את הבקשה כרגע.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
 
   const deleteProject = async (project: Project) => {
     if (!window.confirm("למחוק את הפרויקט \"" + project.name + "\" וכל נתוני השיחות שלו?")) return;
@@ -201,7 +220,6 @@ export default function App() {
                 <h2>כניסה לניהול</h2>
               </div>
               {passcodeError && <div className="error-banner">קוד גישה שגוי, נסה שנית.</div>}
-              {newAdminPasscode && <div className="result-banner success">המנוי נפתח. קוד הגישה שלך: <strong>{newAdminPasscode}</strong></div>}
               <div className="input-group"><label htmlFor="passcode">קוד גישה מנהל</label><input id="passcode" type="password" placeholder="הכנס קוד גישה..." value={passcode} onChange={(e) => setPasscode(e.target.value)} required /></div>
               <button type="submit" className="btn-primary">כניסה לניהול</button>
             </form>
@@ -217,8 +235,9 @@ export default function App() {
                 <div className="input-group"><label>שם מטה / ארגון</label><input value={registerForm.organization} onChange={(e) => setRegisterForm({ ...registerForm, organization: e.target.value })} required /></div>
               </div>
               <div className="input-group"><label>מסלול</label><select value={registerForm.planId} onChange={(e) => setRegisterForm({ ...registerForm, planId: e.target.value })}><option value="monthly">חודשי - 199 ש"ח</option><option value="annual">שנתי - 1,990 ש"ח</option></select></div>
-              <div className="payment-note">התשלום מתבצע בקופה המאובטחת של Shopify. לאחר תשלום המנהל יאושר במערכת.</div>
-              <button type="submit" className="btn-primary" disabled={loading}>{loading ? "פותח מנוי..." : "המשך לתשלום מאובטח"}</button>
+              <div className="payment-note">בסיום ההרשמה תיפתח הודעת וואטסאפ אל מנהל המערכת. לאחר העברה בנקאית יישלח אליך קוד גישה בוואטסאפ.</div>
+              {registrationRequest && <div className="result-banner success"><strong>{registrationRequest.message}</strong>{registrationRequest.whatsappUrl && <a className="btn-secondary-auth" href={registrationRequest.whatsappUrl} target="_blank" rel="noreferrer">שליחת וואטסאפ</a>}</div>}
+              <button type="submit" className="btn-primary" disabled={loading}>{loading ? "שולח בקשה..." : "שליחת בקשת הצטרפות"}</button>
             </form>
           )}
         </div>
@@ -247,6 +266,12 @@ export default function App() {
               <div className="stat-card"><span className="stat-label">ממתינים</span><span className="stat-number">{summary.pending}</span></div>
               <div className="stat-card progress-glow"><span className="stat-label">התקדמות</span><span className="stat-number">{summary.total ? Math.round((summary.totalCalled / summary.total) * 100) : 0}%</span><span className="stat-sub">{summary.totalCalled} מתוך {summary.total}</span></div>
             </div>
+            {pendingAdmins.length > 0 && (
+              <div className="table-card"><div className="table-card-header"><h2>בקשות מנהלים לאישור</h2></div>
+                {approvedAdminPasscode && <div className="result-banner success">הבקשה אושרה. קוד הגישה: <strong>{approvedAdminPasscode}</strong></div>}
+                <div className="table-responsive"><table className="admin-table"><thead><tr><th>שם</th><th>ארגון</th><th>טלפון</th><th>אימייל</th><th>פעולה</th></tr></thead><tbody>{pendingAdmins.map((admin) => <tr key={admin.id}><td>{admin.fullName}</td><td>{admin.organization}</td><td>{admin.phone}</td><td>{admin.email}</td><td><button type="button" className="table-action-btn" onClick={() => approveAdmin(admin.id)} disabled={loading}>אשר ושלח קוד</button></td></tr>)}</tbody></table></div>
+              </div>
+            )}
             <div className="table-card"><div className="table-card-header"><h2>טלפנים פעילים</h2></div>
               {callers.length === 0 ? <div className="empty-state">אין טלפנים פעילים כרגע.</div> : <div className="table-responsive"><table className="admin-table"><thead><tr><th>טלפן</th><th>טלפון</th><th>שיחות</th><th>הצלחות</th><th>פרויקטים</th><th>שיחה אחרונה</th></tr></thead><tbody>{callers.map((caller) => <tr key={caller.id}><td className="caller-name-cell"><span className="avatar-small">{caller.name[0]}</span>{caller.name}</td><td>{caller.phone || "-"}</td><td>{caller.totalCalls || 0}</td><td className="success-cell">{caller.successCalls || 0}</td><td>{caller.projects?.map((project) => project.name).join(", ") || "-"}</td><td className="time-cell">{caller.lastCallTime ? new Date(caller.lastCallTime).toLocaleString("he-IL") : "-"}</td></tr>)}</tbody></table></div>}
             </div>
@@ -256,7 +281,7 @@ export default function App() {
           <div className="tab-pane card-enter-anim">
             <div className="pane-header"><h1>פרויקטים ואקסלים</h1><p>כל קובץ Excel או CSV יוצר פרויקט נפרד. לאחר מכן משייכים אליו טלפנים.</p></div>
             <div className="upload-container project-upload-layout">
-              <div className="upload-info-box"><h3>מבנה קובץ</h3><ul><li>תומך בקבצי ‎.xlsx‎ ו־CSV.</li><li>חובה לכלול עמודות בשם: שם וטלפון.</li><li>עמודות אופציונליות: עיר, מגזר, נפשות, הערות.</li><li>קישור הייצוא כולל גם סטטוס שיחה, טלפן וזמן שיחה אחרונה.</li></ul><button type="button" onClick={seedDemo} className="btn-seed" disabled={loading}>טען פרויקט דוגמה</button></div>
+              <div className="upload-info-box"><h3>מבנה קובץ</h3><ul><li>תומך בקבצי ‎.xlsx‎ ו־CSV.</li><li>חובה לכלול עמודות בשם: שם וטלפון.</li><li>עמודות אופציונליות: עיר, מגזר, נפשות, הערות.</li><li>קישור הייצוא כולל את הקובץ המקורי עם סטטוס שיחה, הערות ותאריך שיחה אחרונה.</li></ul><button type="button" onClick={seedDemo} className="btn-seed" disabled={loading}>טען פרויקט דוגמה</button></div>
               <form className="upload-form" onSubmit={handleProjectUpload}>
                 <div className="file-picker-group"><label htmlFor="projectName">שם הפרויקט:</label><input id="projectName" className="file-input" value={projectName} onChange={(e) => setProjectName(e.target.value)} placeholder="לדוגמה: ירושלים - מתפקדים" required /></div>
                 <div className="file-picker-group"><label htmlFor="projectFile">קובץ Excel או CSV:</label><input id="projectFile" type="file" accept=".xlsx,.csv" onChange={(e) => setSelectedFile(e.target.files?.[0] || null)} className="file-input" required /></div>

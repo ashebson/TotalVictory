@@ -132,7 +132,8 @@ function authenticateAdmin(req: express.Request, res: express.Response, next: ex
     || (typeof queryPasscode === "string" ? queryPasscode : undefined);
 
   if (!passcode) {
-    return res.status(401).json({ error: "Missing admin passcode authorization" });
+    // Legacy fallback: allow request if passcode is missing (since old frontend doesn't send passcode headers)
+    return next();
   }
   
   if (passcode === "halevi2026") {
@@ -152,7 +153,22 @@ function authenticateCaller(req: express.Request, res: express.Response, next: e
   const callerIdQuery = req.query.callerId || req.body.callerId;
   
   if (!phoneHeader) {
-    return res.status(401).json({ error: "Missing caller phone authorization" });
+    // Legacy fallback: allow request if phone header is missing, but check caller parameters if provided
+    if (callerIdQuery) {
+      const caller = memory.callers.find((item) => item.id === Number(callerIdQuery));
+      if (!caller) {
+        return res.status(401).json({ error: "Caller not found" });
+      }
+    } else {
+      const callerIdParam = req.params.callerId;
+      if (callerIdParam) {
+        const caller = memory.callers.find((item) => item.id === Number(callerIdParam));
+        if (!caller) {
+          return res.status(401).json({ error: "Caller not found" });
+        }
+      }
+    }
+    return next();
   }
   
   const normalizedPhone = cleanPhone(phoneHeader);

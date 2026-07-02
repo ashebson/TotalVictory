@@ -34,6 +34,7 @@ interface Stats {
   winPercentage: number;
   targetCalls: number;
   polymarketUrl: string;
+  campaignName: string;
 }
 
 export default function App() {
@@ -125,7 +126,7 @@ export default function App() {
     }
   };
 
-  // Render SVG Path for Polymarket Line Graph
+  // Render SVG Path for Activity Line Graph
   const renderSVGChart = () => {
     if (chartHistory.length < 2) return null;
     const width = 600;
@@ -188,7 +189,7 @@ export default function App() {
       <div className="tv-loading">
         <div className="tv-spinner"></div>
         <h2>מתחבר למטה הפעילות...</h2>
-        <p>טוען נתוני שידור חי עבור עמית הלוי</p>
+        <p>טוען נתוני שידור חי</p>
       </div>
     );
   }
@@ -201,7 +202,7 @@ export default function App() {
           <div className="success-overlay-card">
             <span className="celebrate-emoji">⚡ SUCCESS! ⚡</span>
             <h2>נוספה שיחה מוצלחת!</h2>
-            <p className="flash-voter-note">מצביע נוסף הבטיח את תמיכתו בעמית הלוי</p>
+            <p className="flash-voter-note">איש קשר נוסף הבטיח את תמיכתו</p>
           </div>
         </div>
       )}
@@ -209,8 +210,8 @@ export default function App() {
       {/* Header */}
       <header className="tv-header">
         <div className="header-right">
-          <div className="candidate-badge">מטה הבחירות</div>
-          <h1>עמית הלוי <span>לראשות הליכוד / פריימריז 2026</span></h1>
+          <div className="candidate-badge">מערכת בחירות</div>
+          <h1>{stats.campaignName || "מטה טלפנים דיגיטלי"} <span>שידור פעילות טלפנים</span></h1>
         </div>
         <div className="header-left">
           <div className="live-pill">שדור חי • LIVE</div>
@@ -226,7 +227,7 @@ export default function App() {
         <aside className="tv-stats-sidebar">
           {/* Win Percentage Gauge */}
           <div className="tv-card gauge-card">
-            <h2>סיכוי זכייה משוער</h2>
+            <h2>מדד התקדמות משוער</h2>
             <div className="gauge-outer">
               <svg className="gauge-svg">
                 <circle cx="80" cy="80" r="70" className="gauge-track" />
@@ -243,7 +244,7 @@ export default function App() {
               </svg>
               <div className="gauge-center">
                 <span className="gauge-percent-num">{stats.winPercentage}%</span>
-                <span className="gauge-label">סיכוי לניצחון</span>
+                <span className="gauge-label">מדד התקדמות</span>
               </div>
             </div>
             <div className="gauge-trend">
@@ -281,14 +282,14 @@ export default function App() {
           </div>
         </aside>
 
-        {/* CENTER CONTENT: Polymarket Widget & Leaderboards */}
+        {/* CENTER CONTENT: Activity Widget & Leaderboards */}
         <main className="tv-center-content">
-          {/* Polymarket Widget */}
+          {/* Activity Widget */}
           <div className="tv-card polymarket-card">
             <div className="polymarket-header">
               <div className="pm-brand">
                 <span className="pm-logo">P</span>
-                <h3>polymarket</h3>
+                <h3>מדד פעילות</h3>
                 <span className="pm-verified">✓</span>
               </div>
               <div className="pm-toggle">
@@ -305,7 +306,7 @@ export default function App() {
                   Iframe
                 </button>
               </div>
-              <span className="pm-title">מניות עמית הלוי - זכייה בפריימריז</span>
+              <span className="pm-title">מדד פעילות הקמפיין</span>
             </div>
 
             <div className="polymarket-body">
@@ -316,15 +317,15 @@ export default function App() {
                     <div className="graph-price">
                       <span className="dollar-sign">¢</span>
                       <span className="price-num">{Math.round(stats.winPercentage)}</span>
-                      <span className="price-unit">מחיר מניה</span>
+                      <span className="price-unit">מדד</span>
                     </div>
                     <div className="graph-metrics">
                       <div className="metric">
-                        <span className="metric-label">נפח מסחר 24ש</span>
+                        <span className="metric-label">פעילות 24ש</span>
                         <span className="metric-val">$184.2K</span>
                       </div>
                       <div className="metric">
-                        <span className="metric-label">סך הכל מהמרים</span>
+                        <span className="metric-label">סך הכל שיחות</span>
                         <span className="metric-val">1,842</span>
                       </div>
                     </div>
@@ -335,7 +336,7 @@ export default function App() {
                 /* Iframe display */
                 <iframe
                   src={stats.polymarketUrl}
-                  title="Likud Polymarket"
+                  title="Campaign activity"
                   className="polymarket-iframe"
                   sandbox="allow-scripts allow-same-origin"
                 ></iframe>

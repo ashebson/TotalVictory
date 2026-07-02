@@ -184,7 +184,8 @@ export default function App() {
 
   const seedDemo = async () => { setLoading(true); try { await fetch(API_URL + "/api/contacts/seed", { method: "POST" }); fetchData(); } finally { setLoading(false); } };
 
-  const exportUrl = (project: Project) => API_URL + "/api/projects/" + project.id + "/export.csv";
+  const csvExportUrl = (project: Project) => API_URL + "/api/projects/" + project.id + "/export.csv";
+  const xlsxExportUrl = (project: Project) => API_URL + "/api/projects/" + project.id + "/export.xlsx";
 
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -289,7 +290,7 @@ export default function App() {
                 <section className="project-card" key={project.id}>
                   <div className="project-card-header"><div><h2>{project.name}</h2><span>{project.sourceFileName || "קובץ מקומי"}</span></div><div className="project-card-actions"><strong>{project.stats.total} רשומות</strong><button type="button" onClick={() => deleteProject(project)}>מחק</button></div></div>
                   <div className="project-stats-row"><span>ממתינים: {project.stats.pending}</span><span>בוצעו: {project.stats.totalCalled}</span><span>הצלחות: {project.stats.success}</span></div>
-                  <div className="sheet-link-box"><a href={exportUrl(project)} target="_blank" rel="noreferrer">פתח גיליון מתעדכן</a><small>קישור אחד שמכיל את כל עמודות האקסל המקורי, ובסוף סטטוס, הערות ותאריך שיחה אחרונה.</small></div>
+                  <div className="sheet-link-box"><div className="sheet-actions"><a href={csvExportUrl(project)} target="_blank" rel="noreferrer">פתח CSV מתעדכן</a><a href={xlsxExportUrl(project)} target="_blank" rel="noreferrer">הורד XLSX מתעדכן</a></div><small>שתי האפשרויות כוללות את כל עמודות האקסל המקורי, ובסוף סטטוס, הערות ותאריך שיחה אחרונה.</small></div>
                   <div className="assign-box"><label>שיוך טלפן לפרויקט לפי מספר טלפון בלבד</label><div className="assign-row assign-row-wide"><input value={callerPhoneInputs[project.id] || ""} onChange={(e) => setCallerPhoneInputs((prev) => ({ ...prev, [project.id]: e.target.value }))} placeholder="מספר טלפון של הטלפן" /><button type="button" onClick={() => assignCaller(project.id)} disabled={loading || !callerPhoneInputs[project.id]?.trim()}>שייך</button></div></div>
                   <div className="caller-chip-list">{project.callers.length === 0 ? <span className="muted-text">אין טלפנים משויכים</span> : project.callers.map((caller) => <button key={caller.id} type="button" className="caller-chip" onClick={() => unassignCaller(project.id, caller.id)} title="הסר שיוך">{caller.name || "טרם הזדהה"} · {caller.phone} ×</button>)}</div>
                 </section>

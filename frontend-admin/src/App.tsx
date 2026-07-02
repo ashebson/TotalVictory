@@ -40,7 +40,7 @@ export default function App() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadResult, setUploadResult] = useState<string | null>(null);
   const [callerPhoneInputs, setCallerPhoneInputs] = useState<Record<number, string>>({});
-  const [settings, setSettings] = useState({ target_calls: "5000", whatsapp_template: "" });
+  const [settings, setSettings] = useState({ campaign_name: "מטה טלפנים דיגיטלי", target_calls: "5000", whatsapp_template: "" });
   const [callStatusOptions, setCallStatusOptions] = useState<CallStatusOption[]>(defaultCallStatusOptions);
   const [settingsSaved, setSettingsSaved] = useState(false);
 
@@ -87,7 +87,7 @@ export default function App() {
     const res = await fetch(API_URL + "/api/settings", { headers: getAdminHeaders() });
     if (!res.ok) return;
     const data = await res.json();
-    setSettings({ target_calls: data.target_calls || "5000", whatsapp_template: data.whatsapp_template || "" });
+    setSettings({ campaign_name: data.campaign_name || "מטה טלפנים דיגיטלי", target_calls: data.target_calls || "5000", whatsapp_template: data.whatsapp_template || "" });
     try {
       const parsed = JSON.parse(data.call_status_options || "[]");
       const byId = new Map(parsed.map((item: CallStatusOption) => [item.id, item]));
@@ -267,8 +267,8 @@ export default function App() {
     <div className="auth-page auth-page-clean">
       <section className="auth-shell auth-shell-compact card-enter-anim" dir="rtl">
         <header className="auth-brand">
-          <span className="auth-eyebrow">מטה דיגיטלי</span>
-          <h1>פורום הניצחון בליכוד בראשות ח״כ עמית הלוי</h1>
+          <span className="auth-eyebrow">מערכת בחירות</span>
+          <h1>מטה טלפנים דיגיטלי</h1>
         </header>
 
         <div className="auth-panel">
@@ -311,7 +311,7 @@ export default function App() {
   return (
     <div className="admin-container">
       <aside className="admin-sidebar">
-        <div className="sidebar-header"><h2>מטה עמית הלוי</h2><span>מערכת טלפנים</span></div>
+        <div className="sidebar-header"><h2>{settings.campaign_name || "מטה טלפנים דיגיטלי"}</h2><span>מערכת טלפנים</span></div>
         <nav className="sidebar-nav">
           <button className={"nav-item " + (activeTab === "dashboard" ? "active" : "")} onClick={() => setActiveTab("dashboard")}>לוח בקרה</button>
           <button className={"nav-item " + (activeTab === "projects" ? "active" : "")} onClick={() => setActiveTab("projects")}>פרויקטים ואקסלים</button>
@@ -385,8 +385,9 @@ export default function App() {
         )}
         {activeTab === "settings" && (
           <div className="tab-pane card-enter-anim">
-            <div className="pane-header"><h1>הגדרות</h1><p>הגדרות כלליות של הודעות, תצוגה וסימוני שיחה.</p></div>
+            <div className="pane-header"><h1>הגדרות</h1><p>הגדרות כלליות של שם המטה, הודעות, תצוגה וסימוני שיחה.</p></div>
             <form onSubmit={handleSaveSettings} className="settings-form">
+              <div className="settings-section"><label>שם המטה / הפרויקט</label><input value={settings.campaign_name} onChange={(e) => setSettings({ ...settings, campaign_name: e.target.value })} placeholder="מטה טלפנים דיגיטלי" /></div>
               <div className="settings-section"><h3>תבנית הודעת וואטסאפ</h3><textarea rows={4} value={settings.whatsapp_template} onChange={(e) => setSettings({ ...settings, whatsapp_template: e.target.value })} placeholder="שלום {name}..." /></div>
               <div className="settings-section"><label>יעד שיחות</label><input type="number" value={settings.target_calls} onChange={(e) => setSettings({ ...settings, target_calls: e.target.value })} /></div>
               <div className="settings-section owner-export-settings"><h3>נרשמים כמנהלי מערכת</h3><p>רק קוד הבעלים הראשי יכול להוריד את רשימת בקשות ההרשמה.</p><div className="sheet-actions"><a href={API_URL + "/api/admins/registration-requests.csv?passcode=" + encodeURIComponent(sessionStorage.getItem("admin_passcode") || passcode)} target="_blank" rel="noreferrer">הורד רשימת נרשמים CSV</a></div></div>

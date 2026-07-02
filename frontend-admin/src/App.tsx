@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import "./App.css";
 
+// Vercel build trigger - 2026-07-02 17:41
 const PUBLIC_API_URL = "https://total-victory.onrender.com";
 const LOCAL_API_URL = window.location.protocol + "//" + window.location.hostname + ":5001";
 const API_URL = (import.meta.env.VITE_API_URL || (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" ? LOCAL_API_URL : PUBLIC_API_URL)).replace(/\/$/, "");

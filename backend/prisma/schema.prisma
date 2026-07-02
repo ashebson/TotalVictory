@@ -7,35 +7,67 @@ generator client {
   provider = "prisma-client-js"
 }
 
+model Project {
+  id             Int             @id @default(autoincrement())
+  name           String
+  sourceFileName String?
+  sourceHeaders  Json?
+  createdAt      DateTime        @default(now())
+  contacts       Contact[]
+  callLogs       CallLog[]
+  callerProjects CallerProject[]
+}
+
 model Caller {
-  id        Int       @id @default(autoincrement())
-  name      String    @unique
-  createdAt DateTime  @default(now())
-  contacts  Contact[]
-  callLogs  CallLog[]
+  id             Int             @id @default(autoincrement())
+  name           String
+  phone          String          @unique
+  createdAt      DateTime        @default(now())
+  contacts       Contact[]
+  callLogs       CallLog[]
+  callerProjects CallerProject[]
+}
+
+model CallerProject {
+  id        Int      @id @default(autoincrement())
+  callerId  Int
+  projectId Int
+  caller    Caller   @relation(fields: [callerId], references: [id], onDelete: Cascade)
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([callerId, projectId])
 }
 
 model Contact {
   id           Int       @id @default(autoincrement())
+  projectId    Int
+  project      Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   name         String
-  phone        String    @unique
+  phone        String
   city         String?
   sector       String?
   familySize   Int?
   notes        String?
-  status       String    @default("PENDING") // PENDING, SUCCESS, NOT_INTERESTED, NO_ANSWER, INVALID_NUMBER
+  callNotes    String?
+  sourceData   Json?
+  status       String    @default("PENDING")
   lastCalledAt DateTime?
   callerId     Int?
   caller       Caller?   @relation(fields: [callerId], references: [id])
   callLogs     CallLog[]
+
+  @@unique([projectId, phone])
 }
 
 model CallLog {
   id        Int      @id @default(autoincrement())
+  projectId Int
   callerId  Int
   contactId Int
-  status    String   // SUCCESS, NOT_INTERESTED, NO_ANSWER, INVALID_NUMBER
+  status    String
   timestamp DateTime @default(now())
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   caller    Caller   @relation(fields: [callerId], references: [id], onDelete: Cascade)
   contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
 }
@@ -43,4 +75,29 @@ model CallLog {
 model Setting {
   key   String @id
   value String
+}
+
+
+model Admin {
+  id            Int            @id @default(autoincrement())
+  fullName      String
+  email         String         @unique
+  phone         String         @unique
+  organization  String
+  passcode      String         @unique
+  status        String         @default("ACTIVE")
+  createdAt     DateTime       @default(now())
+  subscriptions Subscription[]
+}
+
+model Subscription {
+  id        Int      @id @default(autoincrement())
+  adminId   Int
+  admin     Admin    @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  planId    String
+  status    String   @default("ACTIVE")
+  provider  String   @default("demo")
+  amount    Int
+  currency  String   @default("ILS")
+  createdAt DateTime @default(now())
 }

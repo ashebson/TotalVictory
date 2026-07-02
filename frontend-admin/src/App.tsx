@@ -1,619 +1,284 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import "./App.css";
 
 const API_URL = window.location.protocol + "//" + window.location.hostname + ":5001";
-const ADMIN_PASSCODE = "halevi2026";
 
-interface Summary {
-  total: number;
-  pending: number;
-  success: number;
-  notInterested: number;
-  noAnswer: number;
-  invalidNumber: number;
-  totalCalled: number;
-}
+type Tab = "dashboard" | "projects" | "settings";
+type Summary = { total: number; pending: number; success: number; notInterested: number; noAnswer: number; invalidNumber: number; totalCalled: number };
+type Caller = { id: number; name: string; phone?: string; totalCalls?: number; successCalls?: number; successRate?: number; lastCallTime?: string | null; projects?: Project[] };
+type Project = { id: number; name: string; sourceFileName?: string | null; createdAt: string; stats: Summary; callers: Caller[] };
 
-interface CallerDetail {
-  id: number;
-  name: string;
-  totalCalls: number;
-  successCalls: number;
-  successRate: number;
-  lastCallTime: string | null;
-}
+const emptySummary: Summary = { total: 0, pending: 0, success: 0, notInterested: 0, noAnswer: 0, invalidNumber: 0, totalCalled: 0 };
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [passcode, setPasscode] = useState("");
   const [passcodeError, setPasscodeError] = useState(false);
-  const [activeTab, setActiveTab] = useState<"dashboard" | "upload" | "settings">("dashboard");
-  
-  // Dashboard state
-  const [summary, setSummary] = useState<Summary | null>(null);
-  const [callers, setCallers] = useState<CallerDetail[]>([]);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [registerForm, setRegisterForm] = useState({ fullName: "", email: "", phone: "", organization: "", planId: "monthly" });
+  const [newAdminPasscode, setNewAdminPasscode] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<Tab>("dashboard");
+  const [summary, setSummary] = useState<Summary>(emptySummary);
+  const [callers, setCallers] = useState<Caller[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(false);
-
-  // Upload state
-  const [csvText, setCsvText] = useState("");
-  const [uploadResult, setUploadResult] = useState<{ success: boolean; inserted?: number; skipped?: number; msg?: string } | null>(null);
-
-  // Settings state
-  const [settings, setSettings] = useState({
-    win_percentage: "74.8",
-    target_calls: "5000",
-    polymarket_url: "https://polymarket.com",
-    whatsapp_template: "",
-  });
+  const [projectName, setProjectName] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadResult, setUploadResult] = useState<string | null>(null);
+  const [callerPhoneInputs, setCallerPhoneInputs] = useState<Record<number, string>>({});
+  const [settings, setSettings] = useState({ win_percentage: "74.8", target_calls: "5000", polymarket_url: "https://polymarket.com", whatsapp_template: "" });
   const [settingsSaved, setSettingsSaved] = useState(false);
 
+  useEffect(() => { if (sessionStorage.getItem("admin_authenticated") === "true") setIsAuthenticated(true); }, []);
   useEffect(() => {
-    // Check if authenticated in session
-    const auth = sessionStorage.getItem("admin_authenticated");
-    if (auth === "true") {
-      setIsAuthenticated(true);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (isAuthenticated) {
-      fetchData();
-      fetchSettings();
-      // Poll stats every 10 seconds for admin dashboard
-      const interval = setInterval(fetchData, 10000);
-      return () => clearInterval(interval);
-    }
+    if (!isAuthenticated) return;
+    fetchData();
+    fetchSettings();
+    const interval = window.setInterval(fetchData, 10000);
+    return () => window.clearInterval(interval);
   }, [isAuthenticated]);
 
   const fetchData = async () => {
-    try {
-      const res = await fetch(`${API_URL}/api/stats/admin`);
-      if (res.ok) {
-        const data = await res.json();
-        setSummary(data.summary);
-        setCallers(data.callers);
-      }
-    } catch (err) {
-      console.error("Error fetching admin stats:", err);
-    }
+    const res = await fetch(API_URL + "/api/stats/admin");
+    if (!res.ok) return;
+    const data = await res.json();
+    setSummary(data.summary || emptySummary);
+    setCallers(data.callers || []);
+    setProjects(data.projects || []);
   };
 
   const fetchSettings = async () => {
-    try {
-      const res = await fetch(`${API_URL}/api/settings`);
-      if (res.ok) {
-        const data = await res.json();
-        setSettings({
-          win_percentage: data.win_percentage || "74.8",
-          target_calls: data.target_calls || "5000",
-          polymarket_url: data.polymarket_url || "https://polymarket.com",
-          whatsapp_template: data.whatsapp_template || "",
-        });
-      }
-    } catch (err) {
-      console.error("Error fetching settings:", err);
-    }
+    const res = await fetch(API_URL + "/api/settings");
+    if (!res.ok) return;
+    const data = await res.json();
+    setSettings({ win_percentage: data.win_percentage || "74.8", target_calls: data.target_calls || "5000", polymarket_url: data.polymarket_url || "https://polymarket.com", whatsapp_template: data.whatsapp_template || "" });
   };
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (passcode === ADMIN_PASSCODE) {
+    setPasscodeError(false);
+    try {
+      const res = await fetch(API_URL + "/api/admins/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ passcode }),
+      });
+      if (!res.ok) throw new Error("invalid");
       setIsAuthenticated(true);
       sessionStorage.setItem("admin_authenticated", "true");
-      setPasscodeError(false);
-    } else {
+    } catch {
       setPasscodeError(true);
     }
   };
 
-  const handleLogout = () => {
-    setIsAuthenticated(false);
-    sessionStorage.removeItem("admin_authenticated");
-    setPasscode("");
-  };
-
-  // Smart CSV parser and mapper
-  const handleCSVUpload = async (e: React.FormEvent) => {
+  const handleRegisterAdmin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!csvText.trim()) return;
-
     setLoading(true);
-    setUploadResult(null);
-
+    setNewAdminPasscode(null);
     try {
-      // Split by lines
-      const lines = csvText.split(/\r?\n/);
-      if (lines.length < 2) {
-        setUploadResult({ success: false, msg: "הקובץ ריק או מכיל שורה אחת בלבד" });
-        setLoading(false);
-        return;
-      }
-
-      // Detect delimiter: comma or semicolon
-      const firstLine = lines[0];
-      const delimiter = firstLine.includes(";") ? ";" : ",";
-      
-      const rawHeaders = firstLine.split(delimiter).map(h => h.trim().replace(/^"|"$/g, ""));
-      
-      // Map headers to standard fields
-      const headerMap: Record<string, string> = {};
-      rawHeaders.forEach((h, idx) => {
-        const lower = h.toLowerCase();
-        if (lower.includes("שם") || lower.includes("name")) {
-          headerMap["name"] = idx.toString();
-        } else if (lower.includes("טלפון") || lower.includes("נייד") || lower.includes("phone") || lower.includes("cell")) {
-          headerMap["phone"] = idx.toString();
-        } else if (lower.includes("עיר") || lower.includes("ישוב") || lower.includes("city") || lower.includes("address")) {
-          headerMap["city"] = idx.toString();
-        } else if (lower.includes("מגזר") || lower.includes("sector")) {
-          headerMap["sector"] = idx.toString();
-        } else if (lower.includes("נפשות") || lower.includes("משפחה") || lower.includes("size")) {
-          headerMap["familySize"] = idx.toString();
-        } else if (lower.includes("הערות") || lower.includes("notes")) {
-          headerMap["notes"] = idx.toString();
-        }
-      });
-
-      if (headerMap["name"] === undefined || headerMap["phone"] === undefined) {
-        setUploadResult({ 
-          success: false, 
-          msg: "לא נמצאו עמודות חובה: 'שם' ו'טלפון'. ודא ששורת הכותרת מכילה עמודות אלו." 
-        });
-        setLoading(false);
-        return;
-      }
-
-      const parsedContacts = [];
-      for (let i = 1; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (!line) continue;
-
-        // Split by delimiter considering quotes (basic quotes support)
-        const matches = line.match(/(".*?"|[^";,]+)(?=\s*[;,]|\s*$)/g) || line.split(delimiter);
-        const cells = matches.map(c => c.trim().replace(/^"|"$/g, ""));
-
-        const contact: any = {
-          name: cells[parseInt(headerMap["name"])],
-          phone: cells[parseInt(headerMap["phone"])],
-        };
-
-        if (headerMap["city"] !== undefined) contact.city = cells[parseInt(headerMap["city"])];
-        if (headerMap["sector"] !== undefined) contact.sector = cells[parseInt(headerMap["sector"])];
-        if (headerMap["familySize"] !== undefined) contact.familySize = cells[parseInt(headerMap["familySize"])];
-        if (headerMap["notes"] !== undefined) contact.notes = cells[parseInt(headerMap["notes"])];
-
-        if (contact.name && contact.phone) {
-          parsedContacts.push(contact);
-        }
-      }
-
-      // Send to API
-      const res = await fetch(`${API_URL}/api/contacts/upload`, {
+      const res = await fetch(API_URL + "/api/admins/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contacts: parsedContacts }),
+        body: JSON.stringify(registerForm),
       });
-
-      if (res.ok) {
-        const data = await res.json();
-        setUploadResult({
-          success: true,
-          inserted: data.inserted,
-          skipped: data.skipped
-        });
-        setCsvText("");
-        fetchData();
-      } else {
-        setUploadResult({ success: false, msg: "שגיאה בהעלאה לשרת" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "registration failed");
+      if (data.checkoutUrl) {
+        window.location.href = data.checkoutUrl;
+        return;
       }
-    } catch (err) {
-      setUploadResult({ success: false, msg: "שגיאה בניתוח קובץ ה-CSV" });
+      setNewAdminPasscode(data.passcode);
+      setPasscode(data.passcode);
+    } catch {
+      alert("לא ניתן לפתוח מנוי מנהל כרגע.");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  const readFilePayload = (file: File) => new Promise<{ fileText?: string; fileContentBase64?: string }>((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = (event) => {
-      const text = event.target?.result as string;
-      setCsvText(text);
-    };
-    reader.readAsText(file);
+    reader.onerror = () => reject(new Error("לא ניתן לקרוא את הקובץ"));
+    if (file.name.toLowerCase().endsWith(".xlsx")) {
+      reader.onload = () => resolve({ fileContentBase64: String(reader.result || "").split(",")[1] });
+      reader.readAsDataURL(file);
+    } else {
+      reader.onload = () => resolve({ fileText: String(reader.result || "") });
+      reader.readAsText(file, "utf-8");
+    }
+  });
+
+  const handleProjectUpload = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!projectName.trim() || !selectedFile) return;
+    setLoading(true);
+    setUploadResult(null);
+    try {
+      const payload = await readFilePayload(selectedFile);
+      const res = await fetch(API_URL + "/api/projects/upload", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectName: projectName.trim(), fileName: selectedFile.name, ...payload }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "העלאה נכשלה");
+      setUploadResult("הפרויקט נפתח בהצלחה. נטענו " + data.inserted + " רשומות, דולגו " + data.skipped + ".");
+      setProjectName("");
+      setSelectedFile(null);
+      const input = document.getElementById("projectFile") as HTMLInputElement | null;
+      if (input) input.value = "";
+      fetchData();
+    } catch (error: any) {
+      setUploadResult(error.message || "שגיאה בהעלאת הקובץ");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const assignCaller = async (projectId: number) => {
+    const phone = callerPhoneInputs[projectId]?.trim();
+    if (!phone) return;
+    setLoading(true);
+    try {
+      const res = await fetch(API_URL + "/api/projects/" + projectId + "/callers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ phone }) });
+      if (res.ok) {
+        setCallerPhoneInputs((prev) => ({ ...prev, [projectId]: "" }));
+        fetchData();
+      } else {
+        alert("צריך מספר טלפון תקין לשיוך טלפן.");
+      }
+    } finally { setLoading(false); }
+  };
+
+  const unassignCaller = async (projectId: number, callerId: number) => {
+    await fetch(API_URL + "/api/projects/" + projectId + "/callers/" + callerId, { method: "DELETE" });
+    fetchData();
+  };
+
+
+  const deleteProject = async (project: Project) => {
+    if (!window.confirm("למחוק את הפרויקט \"" + project.name + "\" וכל נתוני השיחות שלו?")) return;
+    setLoading(true);
+    try {
+      await fetch(API_URL + "/api/projects/" + project.id, { method: "DELETE" });
+      fetchData();
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const seedDemo = async () => { setLoading(true); try { await fetch(API_URL + "/api/contacts/seed", { method: "POST" }); fetchData(); } finally { setLoading(false); } };
+
+  const googleFormula = (project: Project) => '=IMPORTDATA("' + API_URL + '/api/projects/' + project.id + '/export.csv")';
+  const exportUrl = (project: Project) => API_URL + "/api/projects/" + project.id + "/export.csv";
+  const copyGoogleFormula = async (project: Project) => {
+    await navigator.clipboard.writeText(googleFormula(project));
+    alert("נוסחת Google Sheets הועתקה. הדבק אותה בתא A1 בגיליון חדש.");
   };
 
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/settings`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ settings }),
-      });
-
-      if (res.ok) {
-        setSettingsSaved(true);
-        setTimeout(() => setSettingsSaved(false), 3000);
-      }
-    } catch (err) {
-      alert("שגיאה בשמירת הגדרות");
-    } finally {
-      setLoading(false);
-    }
+      const res = await fetch(API_URL + "/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ settings }) });
+      if (res.ok) { setSettingsSaved(true); window.setTimeout(() => setSettingsSaved(false), 2500); }
+    } finally { setLoading(false); }
   };
 
-  const handleResetCampaign = async (type: "contacts" | "callers") => {
-    const msg = type === "contacts" 
-      ? "האם אתה בטוח שברצונך לאפס את הסטטוס של כל אנשי הקשר ל'ממתין' ולמחוק את היסטוריית השיחות?" 
-      : "אזהרה חמורה! האם ברצונך למחוק את כל הטלפנים והיסטוריית השיחות מהמערכת?";
-      
-    if (!window.confirm(msg)) return;
+  if (!isAuthenticated) return (
+    <div className="auth-page auth-page-clean">
+      <section className="auth-shell auth-shell-compact card-enter-anim" dir="rtl">
+        <header className="auth-brand">
+          <span className="auth-eyebrow">מטה דיגיטלי</span>
+          <h1>פורום הניצחון בליכוד בראשות ח״כ עמית הלוי</h1>
+        </header>
 
-    setLoading(true);
-    try {
-      const endpoint = type === "contacts" ? "/api/contacts/reset" : "/api/callers/reset";
-      const res = await fetch(`${API_URL}${endpoint}`, { method: "POST" });
-      if (res.ok) {
-        alert("האיפוס בוצע בהצלחה!");
-        fetchData();
-      } else {
-        alert("שגיאה בביצוע האיפוס");
-      }
-    } catch (err) {
-      alert("שגיאה בתקשורת עם השרת");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSeedMockData = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${API_URL}/api/contacts/seed`, { method: "POST" });
-      if (res.ok) {
-        const data = await res.json();
-        alert(`נוספו בהצלחה ${data.seededCount} אנשי קשר לדוגמה!`);
-        fetchData();
-      }
-    } catch (err) {
-      alert("שגיאה בטעינת אנשי קשר לדוגמה");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  if (!isAuthenticated) {
-    return (
-      <div className="login-container">
-        <form className="login-card card-enter-anim" onSubmit={handleLogin}>
-          <div className="logo-section">
-            <span className="logo-badge">פאנל מנהל</span>
-            <h1>מטה עמית הלוי</h1>
-            <h2>כניסה למערכת הניהול</h2>
+        <div className="auth-panel">
+          <div className="auth-tabs" role="tablist" aria-label="בחירת פעולה">
+            <button type="button" className={authMode === "login" ? "active" : ""} onClick={() => setAuthMode("login")}>כניסה למשתמש קיים</button>
+            <button type="button" className={authMode === "register" ? "active" : ""} onClick={() => setAuthMode("register")}>הרשמה למנהל חדש</button>
           </div>
 
-          {passcodeError && <div className="error-banner">קוד גישה שגוי, נסה שנית.</div>}
-
-          <div className="input-group">
-            <label htmlFor="passcode">קוד גישה מנהל:</label>
-            <input
-              type="password"
-              id="passcode"
-              placeholder="הכנס קוד גישה..."
-              value={passcode}
-              onChange={(e) => setPasscode(e.target.value)}
-              required
-            />
-          </div>
-
-          <button type="submit" className="btn-primary">
-            כניסה לניהול
-          </button>
-        </form>
-      </div>
-    );
-  }
+          {authMode === "login" ? (
+            <form className="auth-form" onSubmit={handleLogin}>
+              <div className="auth-form-header">
+                <h2>כניסה לניהול</h2>
+              </div>
+              {passcodeError && <div className="error-banner">קוד גישה שגוי, נסה שנית.</div>}
+              {newAdminPasscode && <div className="result-banner success">המנוי נפתח. קוד הגישה שלך: <strong>{newAdminPasscode}</strong></div>}
+              <div className="input-group"><label htmlFor="passcode">קוד גישה מנהל</label><input id="passcode" type="password" placeholder="הכנס קוד גישה..." value={passcode} onChange={(e) => setPasscode(e.target.value)} required /></div>
+              <button type="submit" className="btn-primary">כניסה לניהול</button>
+            </form>
+          ) : (
+            <form className="auth-form" onSubmit={handleRegisterAdmin}>
+              <div className="auth-form-header">
+                <h2>הרשמה ורכישת מנוי</h2>
+              </div>
+              <div className="auth-form-grid">
+                <div className="input-group"><label>שם מלא</label><input value={registerForm.fullName} onChange={(e) => setRegisterForm({ ...registerForm, fullName: e.target.value })} required /></div>
+                <div className="input-group"><label>אימייל</label><input type="email" value={registerForm.email} onChange={(e) => setRegisterForm({ ...registerForm, email: e.target.value })} required /></div>
+                <div className="input-group"><label>טלפון</label><input value={registerForm.phone} onChange={(e) => setRegisterForm({ ...registerForm, phone: e.target.value })} required /></div>
+                <div className="input-group"><label>שם מטה / ארגון</label><input value={registerForm.organization} onChange={(e) => setRegisterForm({ ...registerForm, organization: e.target.value })} required /></div>
+              </div>
+              <div className="input-group"><label>מסלול</label><select value={registerForm.planId} onChange={(e) => setRegisterForm({ ...registerForm, planId: e.target.value })}><option value="monthly">חודשי - 199 ש"ח</option><option value="annual">שנתי - 1,990 ש"ח</option></select></div>
+              <div className="payment-note">התשלום מתבצע בקופה המאובטחת של Shopify. לאחר תשלום המנהל יאושר במערכת.</div>
+              <button type="submit" className="btn-primary" disabled={loading}>{loading ? "פותח מנוי..." : "המשך לתשלום מאובטח"}</button>
+            </form>
+          )}
+        </div>
+      </section>
+    </div>
+  );
 
   return (
     <div className="admin-container">
-      {/* Sidebar */}
       <aside className="admin-sidebar">
-        <div className="sidebar-header">
-          <h2>מטה עמית הלוי</h2>
-          <span>מערכת טלפנים</span>
-        </div>
+        <div className="sidebar-header"><h2>מטה עמית הלוי</h2><span>מערכת טלפנים</span></div>
         <nav className="sidebar-nav">
-          <button
-            className={`nav-item ${activeTab === "dashboard" ? "active" : ""}`}
-            onClick={() => setActiveTab("dashboard")}
-          >
-            📊 לוח בקרה
-          </button>
-          <button
-            className={`nav-item ${activeTab === "upload" ? "active" : ""}`}
-            onClick={() => setActiveTab("upload")}
-          >
-            👥 העלאת אנשי קשר
-          </button>
-          <button
-            className={`nav-item ${activeTab === "settings" ? "active" : ""}`}
-            onClick={() => setActiveTab("settings")}
-          >
-            ⚙️ הגדרות קמפיין
-          </button>
+          <button className={"nav-item " + (activeTab === "dashboard" ? "active" : "")} onClick={() => setActiveTab("dashboard")}>לוח בקרה</button>
+          <button className={"nav-item " + (activeTab === "projects" ? "active" : "")} onClick={() => setActiveTab("projects")}>פרויקטים ואקסלים</button>
+          <button className={"nav-item " + (activeTab === "settings" ? "active" : "")} onClick={() => setActiveTab("settings")}>הגדרות</button>
         </nav>
-        <button onClick={handleLogout} className="btn-sidebar-logout">
-          🚪 יציאה
-        </button>
+        <button onClick={() => { setIsAuthenticated(false); sessionStorage.removeItem("admin_authenticated"); }} className="btn-sidebar-logout">יציאה</button>
       </aside>
-
-      {/* Main Content Area */}
       <main className="admin-content">
-        {activeTab === "dashboard" && summary && (
+        {activeTab === "dashboard" && (
           <div className="tab-pane card-enter-anim">
-            <div className="pane-header">
-              <h1>לוח בקרה וסטטיסטיקה</h1>
-              <p>נתונים בזמן אמת של פעילות הטלפנים בקמפיין</p>
-            </div>
-
-            {/* Stats Cards Grid */}
+            <div className="pane-header"><h1>לוח בקרה</h1><p>סיכום כל הפרויקטים וכל פעילות הטלפנים.</p></div>
             <div className="stats-grid">
-              <div className="stat-card">
-                <span className="stat-label">סך הכל ברשימה</span>
-                <span className="stat-number">{summary.total}</span>
-              </div>
-              <div className="stat-card success-glow">
-                <span className="stat-label">שיחות מוצלחות ✅</span>
-                <span className="stat-number">{summary.success}</span>
-                <span className="stat-sub">
-                  {summary.totalCalled > 0 
-                    ? `${Math.round((summary.success / summary.totalCalled) * 100)}% משיחות שנענו` 
-                    : "0%"}
-                </span>
-              </div>
-              <div className="stat-card">
-                <span className="stat-label">לא מעוניינים ❌</span>
-                <span className="stat-number">{summary.notInterested}</span>
-              </div>
-              <div className="stat-card">
-                <span className="stat-label">אין מענה ⏳</span>
-                <span className="stat-number">{summary.noAnswer}</span>
-              </div>
-              <div className="stat-card">
-                <span className="stat-label">מספר שגוי ⚠️</span>
-                <span className="stat-number">{summary.invalidNumber}</span>
-              </div>
-              <div className="stat-card progress-glow">
-                <span className="stat-label">הספק קמפיין</span>
-                <span className="stat-number">
-                  {summary.total > 0 ? `${Math.round((summary.totalCalled / summary.total) * 100)}%` : "0%"}
-                </span>
-                <span className="stat-sub">
-                  התקשרנו ל-{summary.totalCalled} מתוך {summary.total}
-                </span>
-              </div>
+              <div className="stat-card"><span className="stat-label">סה"כ רשומות</span><span className="stat-number">{summary.total}</span></div>
+              <div className="stat-card success-glow"><span className="stat-label">שיחות מוצלחות</span><span className="stat-number">{summary.success}</span></div>
+              <div className="stat-card"><span className="stat-label">ממתינים</span><span className="stat-number">{summary.pending}</span></div>
+              <div className="stat-card progress-glow"><span className="stat-label">התקדמות</span><span className="stat-number">{summary.total ? Math.round((summary.totalCalled / summary.total) * 100) : 0}%</span><span className="stat-sub">{summary.totalCalled} מתוך {summary.total}</span></div>
             </div>
-
-            {/* Callers Statistics Table */}
-            <div className="table-card">
-              <div className="table-card-header">
-                <h2>דירוג ופעילות טלפנים</h2>
-              </div>
-              {callers.length === 0 ? (
-                <div className="empty-state">אין טלפנים פעילים כרגע.</div>
-              ) : (
-                <div className="table-responsive">
-                  <table className="admin-table">
-                    <thead>
-                      <tr>
-                        <th>שם הטלפן</th>
-                        <th>סה"כ שיחות</th>
-                        <th>שיחות מוצלחות</th>
-                        <th>אחוז הצלחה</th>
-                        <th>שיחה אחרונה</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {callers.map((c) => (
-                        <tr key={c.id}>
-                          <td className="caller-name-cell">
-                            <span className="avatar-small">{c.name[0]}</span>
-                            {c.name}
-                          </td>
-                          <td>{c.totalCalls}</td>
-                          <td className="success-cell">{c.successCalls}</td>
-                          <td>
-                            <div className="progress-bar-container">
-                              <span className="progress-value">{c.successRate}%</span>
-                              <div className="progress-bar-bg">
-                                <div 
-                                  className="progress-bar-fill" 
-                                  style={{ width: `${c.successRate}%` }}
-                                ></div>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="time-cell">
-                            {c.lastCallTime 
-                              ? new Date(c.lastCallTime).toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
-                              : "-"}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+            <div className="table-card"><div className="table-card-header"><h2>טלפנים פעילים</h2></div>
+              {callers.length === 0 ? <div className="empty-state">אין טלפנים פעילים כרגע.</div> : <div className="table-responsive"><table className="admin-table"><thead><tr><th>טלפן</th><th>טלפון</th><th>שיחות</th><th>הצלחות</th><th>פרויקטים</th><th>שיחה אחרונה</th></tr></thead><tbody>{callers.map((caller) => <tr key={caller.id}><td className="caller-name-cell"><span className="avatar-small">{caller.name[0]}</span>{caller.name}</td><td>{caller.phone || "-"}</td><td>{caller.totalCalls || 0}</td><td className="success-cell">{caller.successCalls || 0}</td><td>{caller.projects?.map((project) => project.name).join(", ") || "-"}</td><td className="time-cell">{caller.lastCallTime ? new Date(caller.lastCallTime).toLocaleString("he-IL") : "-"}</td></tr>)}</tbody></table></div>}
             </div>
           </div>
         )}
-
-        {activeTab === "upload" && (
+        {activeTab === "projects" && (
           <div className="tab-pane card-enter-anim">
-            <div className="pane-header">
-              <h1>העלאת רשימת תומכים</h1>
-              <p>טען קובץ CSV או הדבק נתונים ישירות מהאקסל. המערכת תזהה את העמודות אוטומטית.</p>
-            </div>
-
-            <div className="upload-container">
-              <div className="upload-info-box">
-                <h3>💡 הנחיות לפורמט:</h3>
-                <ul>
-                  <li>חובה לכלול עמודות בשם: <strong>שם</strong> (שם המצביע) ו-<strong>טלפון</strong> (נייד להתקשרות).</li>
-                  <li>עמודות מומלצות נוספות: <strong>עיר</strong>, <strong>מגזר</strong>, <strong>נפשות</strong>, <strong>הערות</strong>.</li>
-                  <li>אם טוענים מספר קיים, הפרטים שלו יעודכנו (שם, עיר וכו') אך מצב השיחה שלו יישמר.</li>
-                </ul>
-                <button type="button" onClick={handleSeedMockData} className="btn-seed" disabled={loading}>
-                  🌱 טען 10 אנשי קשר לדוגמה לבדיקה
-                </button>
-              </div>
-
-              <form onSubmit={handleCSVUpload} className="upload-form">
-                <div className="file-picker-group">
-                  <label htmlFor="csvFile">בחר קובץ CSV במחשב:</label>
-                  <input
-                    type="file"
-                    id="csvFile"
-                    accept=".csv"
-                    onChange={handleFileChange}
-                    className="file-input"
-                  />
-                </div>
-
-                <div className="textarea-group">
-                  <label htmlFor="csvText">או הדבק שורות CSV כאן (כולל שורת כותרת):</label>
-                  <textarea
-                    id="csvText"
-                    rows={10}
-                    placeholder={`שם,טלפון,עיר,מגזר,הערות\nמשה כהן,0501234567,ירושלים,דתי לאומי,תומך ותיק\nשרה לוי,0529876543,תל אביב,כללי,מתלבטת`}
-                    value={csvText}
-                    onChange={(e) => setCsvText(e.target.value)}
-                  ></textarea>
-                </div>
-
-                {uploadResult && (
-                  <div className={`result-banner ${uploadResult.success ? "success" : "error"}`}>
-                    {uploadResult.success ? (
-                      <div>
-                        🎉 העלאה הושלמה בהצלחה! 
-                        <br />
-                        נוספו/עודכנו <strong>{uploadResult.inserted}</strong> אנשי קשר. 
-                        דלגנו על <strong>{uploadResult.skipped}</strong> שורות לא תקינות.
-                      </div>
-                    ) : (
-                      <div>⚠️ {uploadResult.msg}</div>
-                    )}
-                  </div>
-                )}
-
-                <button type="submit" className="btn-primary" disabled={loading || !csvText.trim()}>
-                  {loading ? "מעלה ומנתח..." : "טען אנשי קשר למערכת"}
-                </button>
+            <div className="pane-header"><h1>פרויקטים ואקסלים</h1><p>כל קובץ Excel או CSV יוצר פרויקט נפרד. לאחר מכן משייכים אליו טלפנים.</p></div>
+            <div className="upload-container project-upload-layout">
+              <div className="upload-info-box"><h3>מבנה קובץ</h3><ul><li>תומך בקבצי ‎.xlsx‎ ו־CSV.</li><li>חובה לכלול עמודות בשם: שם וטלפון.</li><li>עמודות אופציונליות: עיר, מגזר, נפשות, הערות.</li><li>קישור הייצוא כולל גם סטטוס שיחה, טלפן וזמן שיחה אחרונה.</li></ul><button type="button" onClick={seedDemo} className="btn-seed" disabled={loading}>טען פרויקט דוגמה</button></div>
+              <form className="upload-form" onSubmit={handleProjectUpload}>
+                <div className="file-picker-group"><label htmlFor="projectName">שם הפרויקט:</label><input id="projectName" className="file-input" value={projectName} onChange={(e) => setProjectName(e.target.value)} placeholder="לדוגמה: ירושלים - מתפקדים" required /></div>
+                <div className="file-picker-group"><label htmlFor="projectFile">קובץ Excel או CSV:</label><input id="projectFile" type="file" accept=".xlsx,.csv" onChange={(e) => setSelectedFile(e.target.files?.[0] || null)} className="file-input" required /></div>
+                {uploadResult && <div className="result-banner success">{uploadResult}</div>}
+                <button type="submit" className="btn-primary" disabled={loading || !projectName.trim() || !selectedFile}>{loading ? "מעלה..." : "פתח פרויקט מהקובץ"}</button>
               </form>
             </div>
+            <div className="projects-grid">
+              {projects.length === 0 ? <div className="empty-state">עדיין אין פרויקטים. העלה קובץ כדי להתחיל.</div> : projects.map((project) => (
+                <section className="project-card" key={project.id}>
+                  <div className="project-card-header"><div><h2>{project.name}</h2><span>{project.sourceFileName || "קובץ מקומי"}</span></div><div className="project-card-actions"><strong>{project.stats.total} רשומות</strong><button type="button" onClick={() => deleteProject(project)}>מחק</button></div></div>
+                  <div className="project-stats-row"><span>ממתינים: {project.stats.pending}</span><span>בוצעו: {project.stats.totalCalled}</span><span>הצלחות: {project.stats.success}</span></div>
+                  <div className="sheet-link-box"><a href={exportUrl(project)} target="_blank" rel="noreferrer">פתח קישור נתונים CSV</a><a href="https://docs.google.com/spreadsheets/create" target="_blank" rel="noreferrer">פתח Google Sheets חדש</a><button type="button" onClick={() => copyGoogleFormula(project)}>העתק נוסחת IMPORTDATA</button><small>{googleFormula(project)}</small><small>במחשב מקומי הקישור נפתח כ-CSV. סנכרון אוטומטי ב-Google Sheets יעבוד כשכתובת השרת תהיה ציבורית.</small></div>
+                  <div className="assign-box"><label>שיוך טלפן לפרויקט לפי מספר טלפון בלבד</label><div className="assign-row assign-row-wide"><input value={callerPhoneInputs[project.id] || ""} onChange={(e) => setCallerPhoneInputs((prev) => ({ ...prev, [project.id]: e.target.value }))} placeholder="מספר טלפון של הטלפן" /><button type="button" onClick={() => assignCaller(project.id)} disabled={loading || !callerPhoneInputs[project.id]?.trim()}>שייך</button></div></div>
+                  <div className="caller-chip-list">{project.callers.length === 0 ? <span className="muted-text">אין טלפנים משויכים</span> : project.callers.map((caller) => <button key={caller.id} type="button" className="caller-chip" onClick={() => unassignCaller(project.id, caller.id)} title="הסר שיוך">{caller.name || "טרם הזדהה"} · {caller.phone} ×</button>)}</div>
+                </section>
+              ))}
+            </div>
           </div>
         )}
-
         {activeTab === "settings" && (
-          <div className="tab-pane card-enter-anim">
-            <div className="pane-header">
-              <h1>הגדרות קמפיין והודעות</h1>
-              <p>שלוט בפרמטרים הכלליים של מערכת הטלפנים והתצוגות</p>
-            </div>
-
-            <form onSubmit={handleSaveSettings} className="settings-form">
-              <div className="settings-section">
-                <h3>💬 תבנית הודעת וואטסאפ לשיחה מוצלחת</h3>
-                <p className="field-desc">
-                  הודעה זו תיפתח אוטומטית לטלפנים בלחיצת כפתור לאחר סימון "שיחה מוצלחת".
-                  השתמש ב-<strong>{"{name}"}</strong> היכן שברצונך לשתול את שם המצביע.
-                </p>
-                <textarea
-                  rows={4}
-                  value={settings.whatsapp_template}
-                  onChange={(e) => setSettings({ ...settings, whatsapp_template: e.target.value })}
-                  placeholder="היי {name}, שמחתי לשוחח איתך..."
-                  required
-                ></textarea>
-              </div>
-
-              <div className="settings-section-row">
-                <div className="settings-field">
-                  <label>📈 אחוז סיכוי זכייה התחלתי (Polymarket):</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    min="1"
-                    max="100"
-                    value={settings.win_percentage}
-                    onChange={(e) => setSettings({ ...settings, win_percentage: e.target.value })}
-                    required
-                  />
-                  <span className="field-desc">אחוז הסיכוי שיוצג בגרף הטלוויזיה. מושפע משיחות מוצלחות בזמן אמת.</span>
-                </div>
-
-                <div className="settings-field">
-                  <label>📞 יעד שיחות כולל לקמפיין:</label>
-                  <input
-                    type="number"
-                    min="100"
-                    value={settings.target_calls}
-                    onChange={(e) => setSettings({ ...settings, target_calls: e.target.value })}
-                    required
-                  />
-                  <span className="field-desc">מספר השיחות הכולל להצגת קו המטרה.</span>
-                </div>
-              </div>
-
-              <div className="settings-section">
-                <label>🔗 כתובת הטמעת Polymarket (Iframe URL):</label>
-                <input
-                  type="url"
-                  value={settings.polymarket_url}
-                  onChange={(e) => setSettings({ ...settings, polymarket_url: e.target.value })}
-                  placeholder="https://polymarket.com/..."
-                  required
-                />
-                <span className="field-desc">הכתובת שתוטמע בפריים בטלוויזיה. במידה וייחסם יוצג ווידג'ט חיזוי מעוצב.</span>
-              </div>
-
-              {settingsSaved && <div className="result-banner success">ההגדרות נשמרו בהצלחה! ✅</div>}
-
-              <button type="submit" className="btn-primary" disabled={loading}>
-                {loading ? "שומר..." : "שמור הגדרות קמפיין"}
-              </button>
-            </form>
-
-            <hr className="settings-divider" />
-
-            <div className="danger-zone">
-              <h2>⚠️ אזור סכנה (איפוס נתונים)</h2>
-              <p>פעולות אלו הן סופיות ולא ניתן לבטלן. השתמש בזהירות.</p>
-              
-              <div className="danger-buttons">
-                <button
-                  type="button"
-                  onClick={() => handleResetCampaign("contacts")}
-                  className="btn-danger-outline"
-                  disabled={loading}
-                >
-                  🔄 אפס סטטוס שיחות (אנשי קשר יחזרו לממתין)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleResetCampaign("callers")}
-                  className="btn-danger"
-                  disabled={loading}
-                >
-                  🚨 מחק את כל הטלפנים והיסטוריית השיחות
-                </button>
-              </div>
-            </div>
-          </div>
+          <div className="tab-pane card-enter-anim"><div className="pane-header"><h1>הגדרות</h1><p>הגדרות כלליות של הודעות ותצוגת הקמפיין.</p></div><form onSubmit={handleSaveSettings} className="settings-form"><div className="settings-section"><h3>תבנית הודעת וואטסאפ</h3><textarea rows={4} value={settings.whatsapp_template} onChange={(e) => setSettings({ ...settings, whatsapp_template: e.target.value })} placeholder="שלום {name}..." /></div><div className="settings-section-row"><div className="settings-field"><label>אחוז זכייה התחלתי</label><input type="number" value={settings.win_percentage} onChange={(e) => setSettings({ ...settings, win_percentage: e.target.value })} /></div><div className="settings-field"><label>יעד שיחות</label><input type="number" value={settings.target_calls} onChange={(e) => setSettings({ ...settings, target_calls: e.target.value })} /></div></div><div className="settings-section"><label>כתובת Polymarket</label><input value={settings.polymarket_url} onChange={(e) => setSettings({ ...settings, polymarket_url: e.target.value })} /></div>{settingsSaved && <div className="result-banner success">ההגדרות נשמרו.</div>}<button type="submit" className="btn-primary" disabled={loading}>שמור הגדרות</button></form></div>
         )}
       </main>
     </div>

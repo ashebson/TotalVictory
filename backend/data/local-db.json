@@ -1,0 +1,48 @@
+{
+  "projects": [],
+  "callers": [
+    {
+      "id": 1,
+      "name": "בודק בלי שעה",
+      "phone": "0525556677",
+      "createdAt": "2026-07-02T08:08:41.618Z"
+    },
+    {
+      "id": 2,
+      "name": "ישראל ישראלי",
+      "phone": "0521111111",
+      "createdAt": "2026-07-02T08:15:50.390Z"
+    }
+  ],
+  "contacts": [],
+  "callerProjects": [],
+  "callLogs": [],
+  "settings": [
+    {
+      "key": "whatsapp_template",
+      "value": "שלום {name}, שמחתי לשוחח איתך! נשמח לתמיכתך בחבר הכנסת עמית הלוי בפריימריז הקרובים בליכוד. ביחד ננצח! למידע נוסף: https://amithalevi.org.il"
+    },
+    {
+      "key": "polymarket_url",
+      "value": "https://embed.polymarket.com/market?market=will-likud-win-fewer-than-20-seats-in-the-2026-israeli-legislative-election&theme=dark&border=true&height=300"
+    },
+    {
+      "key": "win_percentage",
+      "value": "74.8"
+    },
+    {
+      "key": "target_calls",
+      "value": "5000"
+    }
+  ],
+  "admins": [],
+  "subscriptions": [],
+  "ids": {
+    "project": 2,
+    "caller": 3,
+    "contact": 2,
+    "callLog": 2,
+    "admin": 1,
+    "subscription": 1
+  }
+}

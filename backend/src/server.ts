@@ -47,7 +47,8 @@ const defaultCallStatusOptions = [
 ];
 
 const defaultSettings = [
-  { key: "whatsapp_template", value: "שלום {name}, שמחתי לשוחח איתך! נשמח לתמיכתך בחבר הכנסת עמית הלוי בפריימריז הקרובים בליכוד. ביחד ננצח! למידע נוסף: https://amithalevi.org.il" },
+  { key: "whatsapp_template", value: "שלום {name}, שמחנו לשוחח איתך. נשמח לתמיכתך במועמד/ת במסגרת מערכת הבחירות. ביחד נצליח!" },
+  { key: "campaign_name", value: "מטה טלפנים דיגיטלי" },
   { key: "target_calls", value: "5000" },
   { key: "call_status_options", value: JSON.stringify(defaultCallStatusOptions) },
   { key: "archived_project_ids", value: "[]" },
@@ -599,6 +600,7 @@ function tvStats() {
     leaderboard,
     recentCalls,
     targetCalls: Number.parseInt(settingValue("target_calls", "5000"), 10) || 5000,
+    campaignName: settingValue("campaign_name", "מטה טלפנים דיגיטלי"),
     projects: activeProjects().map(serializeProject),
   };
 }
@@ -834,7 +836,7 @@ function formatWhatsAppPhone(phone: string) {
 
 function buildPaymentRequestMessage(admin: any, subscription: any) {
   return [
-    "שלום, נרשמתי למערכת מטה דיגיטלי ואני רוצה להסדיר תשלום בהעברה בנקאית.",
+    "שלום, נרשמתי למערכת מטה טלפנים דיגיטלי ואני רוצה להסדיר תשלום בהעברה בנקאית.",
     "שם: " + admin.fullName,
     "ארגון: " + admin.organization,
     "טלפון: " + admin.phone,
@@ -1165,10 +1167,10 @@ app.post("/api/contacts/seed", authenticateAdmin, async (_req, res) => {
   let project = memory.projects.find((item) => item.name === "פרויקט דוגמה");
   if (!project) { project = { id: memory.ids.project++, name: "פרויקט דוגמה", sourceFileName: "seed", createdAt: new Date() }; memory.projects.push(project); }
   const contacts = [
-    { name: "משה כהן", phone: "0501234567", city: "ירושלים", sector: "דתי לאומי", familySize: 5, notes: "תומך ותיק של עמית הלוי" },
-    { name: "שרה לוי", phone: "0529876543", city: "תל אביב", sector: "כללי", familySize: 3, notes: "מתלבטת בין עמית לשר אחר" },
+    { name: "משה כהן", phone: "0501234567", city: "ירושלים", sector: "דתי לאומי", familySize: 5, notes: "תומך ותיק של המועמד/ת" },
+    { name: "שרה לוי", phone: "0529876543", city: "תל אביב", sector: "כללי", familySize: 3, notes: "מתלבטת בין כמה מועמדים" },
     { name: "דוד מזרחי", phone: "0541112222", city: "פתח תקווה", sector: "מסורתי", familySize: 6, notes: "צריך לדבר איתו על הנושא החינוכי" },
-    { name: "רחל גולדברג", phone: "0534445555", city: "חיפה", sector: "אקדמאים", familySize: 2, notes: "לא תומכת ליכוד בדרך כלל" },
+    { name: "רחל גולדברג", phone: "0534445555", city: "חיפה", sector: "אקדמאים", familySize: 2, notes: "לא בטוחה בתמיכה כרגע" },
   ];
   const previousContactCount = memory.contacts.filter((contact) => contact.projectId === project.id).length;
   const result = insertContacts(project.id, contacts);
@@ -1189,17 +1191,40 @@ app.post("/api/callers/reset", authenticateOwner, async (_req, res) => {
 });
 
 const PORT = process.env.PORT || 5001;
-server.listen(PORT, async () => {
-  if (process.env.RENDER && process.env.USE_MEMORY_DB === "true") {
-    throw new Error("Production on Render must use PostgreSQL. Refusing to start with in-memory storage to protect caller work.");
-  }
-  if (process.env.USE_MEMORY_DB === "true") {
-    await loadMemoryStore();
-  } else {
-    await loadPrismaStore();
-  }
-  await initSettings();
-  if (process.env.USE_MEMORY_DB === "true") await saveMemoryStore();
-  console.log("Server running on port " + PORT);
-  console.log(process.env.USE_MEMORY_DB === "true" ? "Using local memory database" : "Using Prisma database");
-});
+
+export async function startServer(port: string | number = PORT) {
+  return new Promise<http.Server>((resolve, reject) => {
+    const onError = (error: Error) => reject(error);
+    server.once("error", onError);
+    server.listen(port, async () => {
+      try {
+        if (process.env.RENDER && process.env.USE_MEMORY_DB === "true") {
+          throw new Error("Production on Render must use PostgreSQL. Refusing to start with in-memory storage to protect caller work.");
+        }
+        if (process.env.USE_MEMORY_DB === "true") {
+          await loadMemoryStore();
+        } else {
+          await loadPrismaStore();
+        }
+        await initSettings();
+        if (process.env.USE_MEMORY_DB === "true") await saveMemoryStore();
+        server.off("error", onError);
+        console.log("Server running on port " + port);
+        console.log(process.env.USE_MEMORY_DB === "true" ? "Using local memory database" : "Using Prisma database");
+        resolve(server);
+      } catch (error) {
+        server.off("error", onError);
+        reject(error);
+      }
+    });
+  });
+}
+
+export { app, server };
+
+if (require.main === module) {
+  startServer().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}

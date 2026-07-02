@@ -48,8 +48,6 @@ const defaultCallStatusOptions = [
 
 const defaultSettings = [
   { key: "whatsapp_template", value: "שלום {name}, שמחתי לשוחח איתך! נשמח לתמיכתך בחבר הכנסת עמית הלוי בפריימריז הקרובים בליכוד. ביחד ננצח! למידע נוסף: https://amithalevi.org.il" },
-  { key: "polymarket_url", value: "https://embed.polymarket.com/market?market=will-likud-win-fewer-than-20-seats-in-the-2026-israeli-legislative-election&theme=dark&border=true&height=300" },
-  { key: "win_percentage", value: "74.8" },
   { key: "target_calls", value: "5000" },
   { key: "call_status_options", value: JSON.stringify(defaultCallStatusOptions) },
   { key: "archived_project_ids", value: "[]" },
@@ -188,6 +186,17 @@ ${adminDetails}`;
       console.error("Error sending notification email:", err.message);
     }
   }
+}
+
+function authenticateOwner(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const authHeader = req.headers.authorization;
+  const customHeader = req.headers["x-admin-passcode"];
+  const queryPasscode = req.query.passcode;
+  const passcode = (authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : authHeader)
+    || (typeof customHeader === "string" ? customHeader : undefined)
+    || (typeof queryPasscode === "string" ? queryPasscode : undefined);
+  if (passcode !== "halevi2026") return res.status(403).json({ error: "Owner access required" });
+  next();
 }
 
 function authenticateAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
@@ -589,9 +598,7 @@ function tvStats() {
     successCalls: stats.success,
     leaderboard,
     recentCalls,
-    winPercentage: Number.parseFloat(settingValue("win_percentage", "74.8")),
     targetCalls: Number.parseInt(settingValue("target_calls", "5000"), 10) || 5000,
-    polymarketUrl: settingValue("polymarket_url", defaultSettings.find((item) => item.key === "polymarket_url")!.value),
     projects: activeProjects().map(serializeProject),
   };
 }
@@ -642,35 +649,95 @@ async function loadPrismaStore() {
 
 let prismaSaveQueue = Promise.resolve();
 
+function projectDbData(item: Project) {
+  return { id: item.id, name: item.name, sourceFileName: item.sourceFileName || null, sourceHeaders: item.sourceHeaders || [], createdAt: new Date(item.createdAt) };
+}
+
+function callerDbData(item: Caller) {
+  return { id: item.id, name: item.name || "", phone: cleanPhone(item.phone), whatsappTemplate: item.whatsappTemplate || null, createdAt: new Date(item.createdAt) };
+}
+
+function contactDbData(item: Contact) {
+  return { id: item.id, projectId: item.projectId, name: item.name, phone: cleanPhone(item.phone), city: item.city || null, sector: item.sector || null, familySize: item.familySize ?? null, notes: item.notes || null, callNotes: item.callNotes || null, sourceData: item.sourceData || {}, status: item.status || "PENDING", lastCalledAt: item.lastCalledAt ? new Date(item.lastCalledAt) : null, callerId: item.callerId || null };
+}
+
+function callLogDbData(item: CallLog) {
+  return { id: item.id, projectId: item.projectId, callerId: item.callerId, contactId: item.contactId, status: item.status, timestamp: new Date(item.timestamp) };
+}
+
+async function persistSetting(key: string, value: string) {
+  if (!prisma) return saveMemoryStore();
+  await prisma.setting.upsert({ where: { key }, update: { value }, create: { key, value } });
+}
+
+async function persistSettingsOnly() {
+  if (!prisma) return saveMemoryStore();
+  await Promise.all(memory.settings.map((item) => persistSetting(item.key, item.value)));
+}
+
+async function persistCaller(caller: Caller) {
+  if (!prisma) return saveMemoryStore();
+  const data = callerDbData(caller);
+  await prisma.caller.upsert({ where: { id: caller.id }, update: data, create: data });
+}
+
+async function persistProject(project: Project) {
+  if (!prisma) return saveMemoryStore();
+  const data = projectDbData(project);
+  await prisma.project.upsert({ where: { id: project.id }, update: data, create: data });
+}
+
+async function persistContact(contact: Contact) {
+  if (!prisma) return saveMemoryStore();
+  const data = contactDbData(contact);
+  await prisma.contact.upsert({ where: { id: contact.id }, update: data, create: data });
+}
+
+async function persistCallLog(log: CallLog) {
+  if (!prisma) return saveMemoryStore();
+  const data = callLogDbData(log);
+  await prisma.callLog.upsert({ where: { id: log.id }, update: data, create: data });
+}
+
+async function persistCallerProject(callerId: number, projectId: number) {
+  if (!prisma) return saveMemoryStore();
+  await prisma.callerProject.upsert({ where: { callerId_projectId: { callerId, projectId } }, update: {}, create: { callerId, projectId } });
+}
+
+async function deleteCallerProject(callerId: number, projectId: number) {
+  if (!prisma) return saveMemoryStore();
+  await prisma.callerProject.deleteMany({ where: { callerId, projectId } });
+}
+
+async function persistAdminRecord(admin: any) {
+  if (!prisma) return saveMemoryStore();
+  const data = { id: Number(admin.id), fullName: admin.fullName || "", email: admin.email || "", phone: cleanPhone(admin.phone), organization: admin.organization || "", passcode: admin.passcode || generatePasscode(), status: admin.status || "PENDING", createdAt: new Date(admin.createdAt || Date.now()) };
+  await prisma.admin.upsert({ where: { id: data.id }, update: data, create: data });
+}
+
+async function persistSubscriptionRecord(subscription: any) {
+  if (!prisma) return saveMemoryStore();
+  const data = { id: Number(subscription.id), adminId: Number(subscription.adminId), planId: subscription.planId || "monthly", status: subscription.status || "PENDING", provider: subscription.provider || "bank_transfer", amount: Number(subscription.amount) || 0, currency: subscription.currency || "ILS", createdAt: new Date(subscription.createdAt || Date.now()) };
+  await prisma.subscription.upsert({ where: { id: data.id }, update: data, create: data });
+}
+
+async function persistProjectUpload(project: Project, previousContactCount: number) {
+  if (!prisma) return saveMemoryStore();
+  await persistProject(project);
+  const projectContacts = memory.contacts.filter((contact) => contact.projectId === project.id).slice(previousContactCount);
+  for (const contact of projectContacts) await persistContact(contact);
+}
+
 async function persistPrismaStore() {
   if (!prisma) return;
-  const projects = memory.projects.map((item) => ({ id: item.id, name: item.name, sourceFileName: item.sourceFileName || null, sourceHeaders: item.sourceHeaders || [], createdAt: new Date(item.createdAt) }));
-  const callers = memory.callers.map((item) => ({ id: item.id, name: item.name || "", phone: cleanPhone(item.phone), whatsappTemplate: item.whatsappTemplate || null, createdAt: new Date(item.createdAt) }));
-  const admins = memory.admins.map((item) => ({ id: item.id, fullName: item.fullName || "", email: item.email || "", phone: cleanPhone(item.phone), organization: item.organization || "", passcode: item.passcode || generatePasscode(), status: item.status || "ACTIVE", createdAt: new Date(item.createdAt || Date.now()) }));
-  const settings = memory.settings.map((item) => ({ key: item.key, value: item.value }));
-  const contacts = memory.contacts.map((item) => ({ id: item.id, projectId: item.projectId, name: item.name, phone: cleanPhone(item.phone), city: item.city || null, sector: item.sector || null, familySize: item.familySize ?? null, notes: item.notes || null, callNotes: item.callNotes || null, sourceData: item.sourceData || {}, status: item.status || "PENDING", lastCalledAt: item.lastCalledAt ? new Date(item.lastCalledAt) : null, callerId: item.callerId || null }));
-  const callerProjects = memory.callerProjects.map((item) => ({ callerId: item.callerId, projectId: item.projectId }));
-  const subscriptions = memory.subscriptions.map((item) => ({ id: item.id, adminId: item.adminId, planId: item.planId || "monthly", status: item.status || "ACTIVE", provider: item.provider || "bank_transfer", amount: Number(item.amount) || 0, currency: item.currency || "ILS", createdAt: new Date(item.createdAt || Date.now()) }));
-  const callLogs = memory.callLogs.map((item) => ({ id: item.id, projectId: item.projectId, callerId: item.callerId, contactId: item.contactId, status: item.status, timestamp: new Date(item.timestamp) }));
-
-  await prisma.$transaction(async (tx) => {
-    await tx.callLog.deleteMany();
-    await tx.callerProject.deleteMany();
-    await tx.contact.deleteMany();
-    await tx.subscription.deleteMany();
-    await tx.admin.deleteMany();
-    await tx.caller.deleteMany();
-    await tx.project.deleteMany();
-    await tx.setting.deleteMany();
-    if (projects.length) await tx.project.createMany({ data: projects });
-    if (callers.length) await tx.caller.createMany({ data: callers });
-    if (admins.length) await tx.admin.createMany({ data: admins });
-    if (settings.length) await tx.setting.createMany({ data: settings });
-    if (contacts.length) await tx.contact.createMany({ data: contacts });
-    if (callerProjects.length) await tx.callerProject.createMany({ data: callerProjects });
-    if (subscriptions.length) await tx.subscription.createMany({ data: subscriptions });
-    if (callLogs.length) await tx.callLog.createMany({ data: callLogs });
-  }, { timeout: 30000 });
+  for (const project of memory.projects) await persistProject(project);
+  for (const caller of memory.callers) await persistCaller(caller);
+  for (const admin of memory.admins) await persistAdminRecord(admin);
+  for (const setting of memory.settings) await persistSetting(setting.key, setting.value);
+  for (const contact of memory.contacts) await persistContact(contact);
+  for (const link of memory.callerProjects) await persistCallerProject(link.callerId, link.projectId);
+  for (const subscription of memory.subscriptions) await persistSubscriptionRecord(subscription);
+  for (const log of memory.callLogs) await persistCallLog(log);
 }
 
 function savePrismaStore() {
@@ -800,7 +867,7 @@ app.post("/api/login", async (req, res) => {
     if (normalizedPhone.length < 9) return res.status(400).json({ error: "Valid phone is required" });
     const caller = ensureCaller(String(name), normalizedPhone);
     res.json({ ...caller, projects: getCallerProjects(caller.id) });
-    await saveStore();
+    await persistCaller(caller);
     broadcastStatsUpdate();
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
@@ -829,14 +896,28 @@ app.post("/api/admins/register", async (req, res) => {
     const planId = String(req.body.planId || "monthly");
     if (!fullName || !email || phone.length < 9 || !organization) return res.status(400).json({ error: "Missing admin registration details" });
 
+    let admin = memory.admins.find((item) => item.email === email || cleanPhone(item.phone) === phone);
+    if (!admin) {
+      admin = { id: memory.ids.admin++, fullName, email, phone, organization, passcode: generatePasscode(), status: "PENDING", createdAt: new Date().toISOString() };
+      memory.admins.push(admin);
+    } else {
+      Object.assign(admin, { fullName, email, phone, organization, status: admin.status === "ACTIVE" ? "ACTIVE" : "PENDING" });
+    }
+
+    const subscription = { id: memory.ids.subscription++, adminId: admin.id, planId, status: admin.status === "ACTIVE" ? "ACTIVE" : "PENDING", provider: "bank_transfer", amount: planId === "annual" ? 1990 : 199, currency: "ILS", createdAt: new Date().toISOString() };
+    memory.subscriptions.push(subscription);
+
+    await persistAdminRecord(admin);
+    await persistSubscriptionRecord(subscription);
+
     const registrationRequest = {
-      id: "REQ-" + Date.now().toString(36).toUpperCase(),
+      id: admin.id,
       fullName,
       email,
       phone,
       organization,
       planId,
-      createdAt: new Date().toISOString(),
+      createdAt: admin.createdAt,
     };
 
     sendRegistrationNotification(registrationRequest, planId).catch(console.error);
@@ -844,10 +925,28 @@ app.post("/api/admins/register", async (req, res) => {
     res.json({
       success: true,
       mode: "owner_private_review",
-      requestId: registrationRequest.id,
+      requestId: admin.id,
       message: "בקשת ההצטרפות נשלחה לבדיקה. נחזור אליך באופן אישי עם המשך התהליך וקוד גישה לאחר אישור.",
     });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
+});
+
+app.get("/api/admins/registration-requests", authenticateOwner, (_req, res) => {
+  const requests = memory.admins
+    .filter((admin) => admin.status !== "ACTIVE")
+    .map((admin) => ({ ...publicAdmin(admin), subscriptions: memory.subscriptions.filter((item) => item.adminId === admin.id) }));
+  res.json(requests);
+});
+
+app.get("/api/admins/registration-requests.csv", authenticateOwner, (_req, res) => {
+  const headers = ["מספר בקשה", "שם מלא", "ארגון", "טלפון", "אימייל", "סטטוס", "מסלול", "תאריך הרשמה"];
+  const rows = memory.admins.filter((admin) => admin.status !== "ACTIVE").map((admin) => {
+    const subscription = [...memory.subscriptions].reverse().find((item) => item.adminId === admin.id);
+    return [admin.id, admin.fullName, admin.organization, admin.phone, admin.email, admin.status, planLabel(subscription?.planId || "monthly"), admin.createdAt];
+  });
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", "attachment; filename=admin-registration-requests.csv");
+  res.send("﻿" + [headers, ...rows].map((row) => row.map(csvEscape).join(",")).join("\n"));
 });
 
 app.post("/api/admins/:adminId/approve", authenticateAdmin, async (req, res) => {
@@ -862,7 +961,8 @@ app.post("/api/admins/:adminId/approve", authenticateAdmin, async (req, res) => 
       subscription.provider = "bank_transfer";
       subscription.paidAt = new Date().toISOString();
     }
-    await saveStore();
+    await persistAdminRecord(admin);
+    if (subscription) await persistSubscriptionRecord(subscription);
     res.json({ success: true, admin: publicAdmin(admin), passcode: admin.passcode, whatsappUrl: buildPasscodeWhatsAppUrl(admin) });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
@@ -876,7 +976,7 @@ app.post("/api/callers/:callerId/settings", authenticateCaller, async (req, res)
     const caller = memory.callers.find((item) => item.id === callerId);
     if (!caller) return res.status(404).json({ error: "Caller not found" });
     caller.whatsappTemplate = String(req.body.whatsappTemplate || "").trim() || null;
-    await saveStore();
+    await persistCaller(caller);
     res.json({ success: true, caller });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
@@ -890,9 +990,10 @@ app.post("/api/projects/upload", authenticateAdmin, async (req, res) => {
     const contacts = parseUploadedContacts(req.body);
     const project = { id: memory.ids.project++, name: projectName, sourceFileName: req.body.fileName || null, sourceHeaders: Array.isArray(contacts[0]?.sourceHeaders) ? contacts[0].sourceHeaders : [], createdAt: new Date() };
     memory.projects.push(project);
+    const previousContactCount = memory.contacts.filter((contact) => contact.projectId === project.id).length;
     const result = insertContacts(project.id, contacts);
     res.json({ success: true, project: serializeProject(project), ...result });
-    await saveStore();
+    await persistProjectUpload(project, previousContactCount);
     broadcastStatsUpdate();
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
@@ -922,7 +1023,7 @@ app.delete("/api/projects/:projectId", authenticateAdmin, async (req, res) => {
   if (!project) return res.status(404).json({ error: "Project not found" });
   setProjectArchived(projectId, true);
   res.json({ success: true, archived: true, project: serializeProject(project) });
-  await saveStore();
+  await persistSettingsOnly();
   broadcastStatsUpdate();
 });
 
@@ -932,7 +1033,7 @@ app.post("/api/projects/:projectId/restore", authenticateAdmin, async (req, res)
   if (!project) return res.status(404).json({ error: "Project not found" });
   setProjectArchived(projectId, false);
   res.json({ success: true, archived: false, project: serializeProject(project) });
-  await saveStore();
+  await persistSettingsOnly();
   broadcastStatsUpdate();
 });
 
@@ -946,7 +1047,8 @@ app.post("/api/projects/:projectId/callers", authenticateAdmin, async (req, res)
     const caller = ensureCaller(undefined, phone);
     linkCallerToProject(caller.id, projectId);
     res.json({ success: true, project: serializeProject(project), caller });
-    await saveStore();
+    await persistCaller(caller);
+    await persistCallerProject(caller.id, projectId);
     broadcastStatsUpdate();
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
@@ -956,7 +1058,7 @@ app.delete("/api/projects/:projectId/callers/:callerId", authenticateAdmin, asyn
   const callerId = Number(req.params.callerId);
   memory.callerProjects = memory.callerProjects.filter((link) => !(link.projectId === projectId && link.callerId === callerId));
   res.json({ success: true });
-  await saveStore();
+  await deleteCallerProject(callerId, projectId);
   broadcastStatsUpdate();
 });
 
@@ -982,7 +1084,7 @@ app.get("/api/contacts/next", authenticateCaller, async (req, res) => {
       if (nextContact) {
         nextContact.callerId = callerId;
         nextContact.lastCalledAt = new Date();
-        await saveStore();
+        await persistContact(nextContact);
       }
       return nextContact;
     });
@@ -993,7 +1095,7 @@ app.get("/api/contacts/next", authenticateCaller, async (req, res) => {
 
 app.post("/api/contacts/skip", authenticateCaller, async (req, res) => {
   const contact = memory.contacts.find((item) => item.id === Number(req.body.contactId));
-  if (contact) { contact.callerId = null; contact.lastCalledAt = null; await saveStore(); }
+  if (contact) { contact.callerId = null; contact.lastCalledAt = null; await persistContact(contact); }
   res.json({ success: true });
 });
 
@@ -1010,13 +1112,9 @@ app.post("/api/calls", authenticateCaller, async (req, res) => {
     contact.status = status; contact.callNotes = callNotes || null; contact.lastCalledAt = new Date(); contact.callerId = callerId;
     const log = { id: memory.ids.callLog++, projectId: contact.projectId, callerId, contactId, status, timestamp: new Date() };
     memory.callLogs.push(log);
-    const setting = memory.settings.find((item) => item.key === "win_percentage");
-    if (setting && (status === "SUCCESS" || status === "NOT_INTERESTED")) {
-      const value = Number.parseFloat(setting.value || "74.8");
-      setting.value = (status === "SUCCESS" ? Math.min(99.9, value + 0.15) : Math.max(50, value - 0.08)).toFixed(2);
-    }
     res.json({ ...log, caller: memory.callers.find((caller) => caller.id === callerId), contact });
-    await saveStore();
+    await persistContact(contact);
+    await persistCallLog(log);
     broadcastStatsUpdate();
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
@@ -1045,17 +1143,20 @@ app.post("/api/settings", authenticateAdmin, async (req, res) => {
     if (existing) existing.value = String(value); else memory.settings.push({ key, value: String(value) });
   }
   res.json({ success: true });
-  await saveStore();
+  await persistSettingsOnly();
   broadcastStatsUpdate();
 });
 
 app.post("/api/contacts/upload", authenticateAdmin, async (req, res) => {
   try {
     let project = memory.projects[0];
-    if (!project) { project = { id: memory.ids.project++, name: "פרויקט ראשי", sourceFileName: null, createdAt: new Date() }; memory.projects.push(project); }
+    let isNewProject = false;
+    if (!project) { project = { id: memory.ids.project++, name: "פרויקט ראשי", sourceFileName: null, createdAt: new Date() }; memory.projects.push(project); isNewProject = true; }
+    const previousContactCount = memory.contacts.filter((contact) => contact.projectId === project.id).length;
     const result = insertContacts(project.id, req.body.contacts || []);
     res.json({ success: true, ...result, project: serializeProject(project) });
-    await saveStore();
+    if (isNewProject) await persistProject(project);
+    await persistProjectUpload(project, previousContactCount);
     broadcastStatsUpdate();
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
@@ -1069,38 +1170,36 @@ app.post("/api/contacts/seed", authenticateAdmin, async (_req, res) => {
     { name: "דוד מזרחי", phone: "0541112222", city: "פתח תקווה", sector: "מסורתי", familySize: 6, notes: "צריך לדבר איתו על הנושא החינוכי" },
     { name: "רחל גולדברג", phone: "0534445555", city: "חיפה", sector: "אקדמאים", familySize: 2, notes: "לא תומכת ליכוד בדרך כלל" },
   ];
+  const previousContactCount = memory.contacts.filter((contact) => contact.projectId === project.id).length;
   const result = insertContacts(project.id, contacts);
   if (memory.callers.length) linkCallerToProject(memory.callers[0].id, project.id);
   res.json({ success: true, seededCount: result.inserted, project: serializeProject(project) });
-  await saveStore();
+  await persistProject(project);
+  await persistProjectUpload(project, previousContactCount);
+  if (memory.callers.length) await persistCallerProject(memory.callers[0].id, project.id);
   broadcastStatsUpdate();
 });
 
-app.post("/api/contacts/reset", authenticateAdmin, async (_req, res) => {
-  memory.callLogs = [];
-  memory.contacts.forEach((contact) => { contact.status = "PENDING"; contact.callerId = null; contact.lastCalledAt = null; });
-  res.json({ success: true });
-  await saveStore();
-  broadcastStatsUpdate();
+app.post("/api/contacts/reset", authenticateOwner, async (_req, res) => {
+  res.status(403).json({ error: "Reset is disabled to protect caller work and uploaded Excel data" });
 });
 
-app.post("/api/callers/reset", authenticateAdmin, async (_req, res) => {
-  memory.callLogs = []; memory.callers = []; memory.callerProjects = [];
-  memory.contacts.forEach((contact) => { contact.status = "PENDING"; contact.callerId = null; contact.lastCalledAt = null; });
-  res.json({ success: true });
-  await saveStore();
-  broadcastStatsUpdate();
+app.post("/api/callers/reset", authenticateOwner, async (_req, res) => {
+  res.status(403).json({ error: "Reset is disabled to protect caller work and uploaded Excel data" });
 });
 
 const PORT = process.env.PORT || 5001;
 server.listen(PORT, async () => {
+  if (process.env.RENDER && process.env.USE_MEMORY_DB === "true") {
+    throw new Error("Production on Render must use PostgreSQL. Refusing to start with in-memory storage to protect caller work.");
+  }
   if (process.env.USE_MEMORY_DB === "true") {
     await loadMemoryStore();
   } else {
     await loadPrismaStore();
   }
   await initSettings();
-  await saveStore();
+  if (process.env.USE_MEMORY_DB === "true") await saveMemoryStore();
   console.log("Server running on port " + PORT);
   console.log(process.env.USE_MEMORY_DB === "true" ? "Using local memory database" : "Using Prisma database");
 });

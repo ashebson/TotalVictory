@@ -17,4 +17,4 @@ RUN npm run build
 EXPOSE 5001
 
 # Command to run migrations and start the server
-CMD ["sh", "-c", "npx prisma db push && npm start"]
+CMD ["sh", "-c", "npx prisma migrate deploy && npm start"]

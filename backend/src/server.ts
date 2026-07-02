@@ -39,15 +39,76 @@ function enqueueContactAllocation<T>(work: () => T | Promise<T>) {
   return result;
 }
 
+const defaultCallStatusOptions = [
+  { id: "SUCCESS", label: "שיחה מוצלחת", active: true, className: "success" },
+  { id: "NOT_INTERESTED", label: "לא מעוניין", active: true, className: "no-interest" },
+  { id: "NO_ANSWER", label: "אין מענה", active: true, className: "no-answer" },
+  { id: "INVALID_NUMBER", label: "מספר שגוי", active: true, className: "invalid" },
+];
+
 const defaultSettings = [
   { key: "whatsapp_template", value: "שלום {name}, שמחתי לשוחח איתך! נשמח לתמיכתך בחבר הכנסת עמית הלוי בפריימריז הקרובים בליכוד. ביחד ננצח! למידע נוסף: https://amithalevi.org.il" },
   { key: "polymarket_url", value: "https://embed.polymarket.com/market?market=will-likud-win-fewer-than-20-seats-in-the-2026-israeli-legislative-election&theme=dark&border=true&height=300" },
   { key: "win_percentage", value: "74.8" },
   { key: "target_calls", value: "5000" },
+  { key: "call_status_options", value: JSON.stringify(defaultCallStatusOptions) },
+  { key: "archived_project_ids", value: "[]" },
 ];
 
 function cleanPhone(phone: unknown) { return String(phone || "").replace(/\D/g, ""); }
 function normalizeHeader(value: string) { return value.trim().replace(/^"|"$/g, "").toLowerCase(); }
+
+function settingValue(key: string, fallback: string) {
+  return memory.settings.find((item) => item.key === key)?.value || fallback;
+}
+
+function parseJsonSetting<T>(key: string, fallback: T): T {
+  try {
+    const raw = memory.settings.find((item) => item.key === key)?.value;
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function getCallStatusOptions() {
+  const configured = parseJsonSetting<any[]>("call_status_options", defaultCallStatusOptions);
+  const byId = new Map(configured.map((item) => [String(item.id || ""), item]));
+  const options = defaultCallStatusOptions.map((base) => {
+    const item = byId.get(base.id) || {};
+    const label = String(item.label || base.label).trim().slice(0, 40) || base.label;
+    return { ...base, label, active: item.active !== false };
+  });
+  return options.some((item) => item.active) ? options : defaultCallStatusOptions;
+}
+
+function callStatusLabel(status: string) {
+  return getCallStatusOptions().find((item) => item.id === status)?.label || status;
+}
+
+function archivedProjectIds() {
+  return parseJsonSetting<number[]>("archived_project_ids", []).map(Number).filter(Number.isFinite);
+}
+
+function isProjectArchived(projectId: number) {
+  return archivedProjectIds().includes(projectId);
+}
+
+function setProjectArchived(projectId: number, archived: boolean) {
+  const ids = new Set(archivedProjectIds());
+  if (archived) ids.add(projectId); else ids.delete(projectId);
+  const value = JSON.stringify([...ids]);
+  const existing = memory.settings.find((item) => item.key === "archived_project_ids");
+  if (existing) existing.value = value; else memory.settings.push({ key: "archived_project_ids", value });
+}
+
+function activeContacts() {
+  return memory.contacts.filter((contact) => !isProjectArchived(contact.projectId));
+}
+
+function activeProjects() {
+  return memory.projects.filter((project) => !isProjectArchived(project.id));
+}
 
 async function saveStore() {
   if (process.env.USE_MEMORY_DB === "true") {
@@ -415,14 +476,8 @@ function parseXlsx(base64: string) {
 }
 
 function exportStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    PENDING: "ממתין לשיחה",
-    SUCCESS: "תומך",
-    NOT_INTERESTED: "לא מעוניין",
-    NO_ANSWER: "לא ענה",
-    INVALID_NUMBER: "מספר שגוי",
-  };
-  return labels[status] || status;
+  if (status === "PENDING") return "ממתין לשיחה";
+  return callStatusLabel(status);
 }
 
 function csvEscape(value: unknown) {
@@ -490,14 +545,15 @@ function projectStats(projectId: number) {
 }
 
 function allStats() {
+  const contacts = activeContacts();
   return {
-    total: memory.contacts.length,
-    pending: memory.contacts.filter((contact) => contact.status === "PENDING").length,
-    success: memory.contacts.filter((contact) => contact.status === "SUCCESS").length,
-    notInterested: memory.contacts.filter((contact) => contact.status === "NOT_INTERESTED").length,
-    noAnswer: memory.contacts.filter((contact) => contact.status === "NO_ANSWER").length,
-    invalidNumber: memory.contacts.filter((contact) => contact.status === "INVALID_NUMBER").length,
-    totalCalled: memory.contacts.filter((contact) => contact.status !== "PENDING").length,
+    total: contacts.length,
+    pending: contacts.filter((contact) => contact.status === "PENDING").length,
+    success: contacts.filter((contact) => contact.status === "SUCCESS").length,
+    notInterested: contacts.filter((contact) => contact.status === "NOT_INTERESTED").length,
+    noAnswer: contacts.filter((contact) => contact.status === "NO_ANSWER").length,
+    invalidNumber: contacts.filter((contact) => contact.status === "INVALID_NUMBER").length,
+    totalCalled: contacts.filter((contact) => contact.status !== "PENDING").length,
   };
 }
 
@@ -536,18 +592,18 @@ function tvStats() {
     winPercentage: Number.parseFloat(settingValue("win_percentage", "74.8")),
     targetCalls: Number.parseInt(settingValue("target_calls", "5000"), 10) || 5000,
     polymarketUrl: settingValue("polymarket_url", defaultSettings.find((item) => item.key === "polymarket_url")!.value),
-    projects: memory.projects.map(serializeProject),
+    projects: activeProjects().map(serializeProject),
   };
 }
 
 function serializeProject(project: Project) {
   const callerIds = memory.callerProjects.filter((link) => link.projectId === project.id).map((link) => link.callerId);
-  return { ...project, stats: projectStats(project.id), callers: memory.callers.filter((caller) => callerIds.includes(caller.id)) };
+  return { ...project, archived: isProjectArchived(project.id), stats: projectStats(project.id), callers: memory.callers.filter((caller) => callerIds.includes(caller.id)) };
 }
 
 function getCallerProjects(callerId: number) {
   const projectIds = memory.callerProjects.filter((link) => link.callerId === callerId).map((link) => link.projectId);
-  return memory.projects.filter((project) => projectIds.includes(project.id)).map(serializeProject);
+  return activeProjects().filter((project) => projectIds.includes(project.id)).map(serializeProject);
 }
 
 function nextId(items: { id: number }[]) {
@@ -862,11 +918,20 @@ app.get("/api/projects/:projectId/export.xlsx", authenticateAdmin, (req, res) =>
 
 app.delete("/api/projects/:projectId", authenticateAdmin, async (req, res) => {
   const projectId = Number(req.params.projectId);
-  memory.projects = memory.projects.filter((item) => item.id !== projectId);
-  memory.contacts = memory.contacts.filter((item) => item.projectId !== projectId);
-  memory.callLogs = memory.callLogs.filter((item) => item.projectId !== projectId);
-  memory.callerProjects = memory.callerProjects.filter((item) => item.projectId !== projectId);
-  res.json({ success: true });
+  const project = memory.projects.find((item) => item.id === projectId);
+  if (!project) return res.status(404).json({ error: "Project not found" });
+  setProjectArchived(projectId, true);
+  res.json({ success: true, archived: true, project: serializeProject(project) });
+  await saveStore();
+  broadcastStatsUpdate();
+});
+
+app.post("/api/projects/:projectId/restore", authenticateAdmin, async (req, res) => {
+  const projectId = Number(req.params.projectId);
+  const project = memory.projects.find((item) => item.id === projectId);
+  if (!project) return res.status(404).json({ error: "Project not found" });
+  setProjectArchived(projectId, false);
+  res.json({ success: true, archived: false, project: serializeProject(project) });
   await saveStore();
   broadcastStatsUpdate();
 });
@@ -900,6 +965,7 @@ app.get("/api/contacts/next", authenticateCaller, async (req, res) => {
     const callerId = Number(req.query.callerId);
     const projectId = Number(req.query.projectId);
     if (!callerId || !projectId) return res.status(400).json({ error: "callerId and projectId are required" });
+    if (isProjectArchived(projectId)) return res.status(403).json({ error: "Project is archived" });
     const allowed = memory.callerProjects.some((link) => link.callerId === callerId && link.projectId === projectId);
     if (!allowed) return res.status(403).json({ error: "Caller is not assigned to this project" });
 
@@ -937,7 +1003,7 @@ app.post("/api/calls", authenticateCaller, async (req, res) => {
     const contactId = Number(req.body.contactId);
     const status = String(req.body.status || "");
     const callNotes = String(req.body.callNotes || "").trim().slice(0, 500);
-    const validStatuses = ["SUCCESS", "NOT_INTERESTED", "NO_ANSWER", "INVALID_NUMBER"];
+    const validStatuses = defaultCallStatusOptions.map((item) => item.id);
     if (!callerId || !contactId || !validStatuses.includes(status)) return res.status(400).json({ error: "Invalid call payload" });
     const contact = memory.contacts.find((item) => item.id === contactId);
     if (!contact) return res.status(404).json({ error: "Contact not found" });
@@ -966,7 +1032,10 @@ app.get("/api/stats/admin", authenticateAdmin, (_req, res) => {
 });
 
 app.get("/api/stats/tv", (_req, res) => res.json(tvStats()));
-app.get("/api/settings", (_req, res) => res.json(Object.fromEntries(memory.settings.map((item) => [item.key, item.value]))));
+app.get("/api/settings", (_req, res) => res.json({
+  ...Object.fromEntries(memory.settings.map((item) => [item.key, item.value])),
+  call_status_options: JSON.stringify(getCallStatusOptions()),
+}));
 
 app.post("/api/settings", authenticateAdmin, async (req, res) => {
   const settings = req.body.settings;

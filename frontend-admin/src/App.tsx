@@ -9,7 +9,15 @@ const API_URL = (import.meta.env.VITE_API_URL || (window.location.hostname === "
 type Tab = "dashboard" | "projects" | "settings";
 type Summary = { total: number; pending: number; success: number; notInterested: number; noAnswer: number; invalidNumber: number; totalCalled: number };
 type Caller = { id: number; name: string; phone?: string; totalCalls?: number; successCalls?: number; successRate?: number; lastCallTime?: string | null; projects?: Project[] };
-type Project = { id: number; name: string; sourceFileName?: string | null; createdAt: string; stats: Summary; callers: Caller[] };
+type Project = { id: number; name: string; sourceFileName?: string | null; createdAt: string; stats: Summary; callers: Caller[]; archived?: boolean };
+type CallStatusOption = { id: string; label: string; active: boolean; className: string };
+
+const defaultCallStatusOptions: CallStatusOption[] = [
+  { id: "SUCCESS", label: "שיחה מוצלחת", active: true, className: "success" },
+  { id: "NOT_INTERESTED", label: "לא מעוניין", active: true, className: "no-interest" },
+  { id: "NO_ANSWER", label: "אין מענה", active: true, className: "no-answer" },
+  { id: "INVALID_NUMBER", label: "מספר שגוי", active: true, className: "invalid" },
+];
 
 const emptySummary: Summary = { total: 0, pending: 0, success: 0, notInterested: 0, noAnswer: 0, invalidNumber: 0, totalCalled: 0 };
 
@@ -30,6 +38,7 @@ export default function App() {
   const [uploadResult, setUploadResult] = useState<string | null>(null);
   const [callerPhoneInputs, setCallerPhoneInputs] = useState<Record<number, string>>({});
   const [settings, setSettings] = useState({ win_percentage: "74.8", target_calls: "5000", polymarket_url: "https://polymarket.com", whatsapp_template: "" });
+  const [callStatusOptions, setCallStatusOptions] = useState<CallStatusOption[]>(defaultCallStatusOptions);
   const [settingsSaved, setSettingsSaved] = useState(false);
 
     const getAdminHeaders = (extraHeaders: Record<string, string> = {}) => {
@@ -75,6 +84,13 @@ export default function App() {
     if (!res.ok) return;
     const data = await res.json();
     setSettings({ win_percentage: data.win_percentage || "74.8", target_calls: data.target_calls || "5000", polymarket_url: data.polymarket_url || "https://polymarket.com", whatsapp_template: data.whatsapp_template || "" });
+    try {
+      const parsed = JSON.parse(data.call_status_options || "[]");
+      const byId = new Map(parsed.map((item: CallStatusOption) => [item.id, item]));
+      setCallStatusOptions(defaultCallStatusOptions.map((option) => ({ ...option, ...(byId.get(option.id) || {}) })));
+    } catch {
+      setCallStatusOptions(defaultCallStatusOptions);
+    }
   };
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -171,10 +187,21 @@ export default function App() {
   };
 
   const deleteProject = async (project: Project) => {
-    if (!window.confirm("למחוק את הפרויקט \"" + project.name + "\" וכל נתוני השיחות שלו?")) return;
+    const approved = window.confirm("להעביר את הפרויקט "" + project.name + "" לארכיון? הנתונים, האקסל, הסטטוסים והערות הטלפנים יישמרו וניתן יהיה לשחזר אותם.");
+    if (!approved) return;
     setLoading(true);
     try {
       await fetch(API_URL + "/api/projects/" + project.id, { method: "DELETE", headers: getAdminHeaders() });
+      fetchData();
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const restoreProject = async (project: Project) => {
+    setLoading(true);
+    try {
+      await fetch(API_URL + "/api/projects/" + project.id + "/restore", { method: "POST", headers: getAdminHeaders() });
       fetchData();
     } finally {
       setLoading(false);
@@ -190,10 +217,17 @@ export default function App() {
     e.preventDefault();
     setLoading(true);
     try {
-      const res = await fetch(API_URL + "/api/settings", { method: "POST", headers: getAdminHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ settings }) });
+      const settingsPayload = { ...settings, call_status_options: JSON.stringify(callStatusOptions) };
+      const res = await fetch(API_URL + "/api/settings", { method: "POST", headers: getAdminHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ settings: settingsPayload }) });
       if (res.ok) { setSettingsSaved(true); window.setTimeout(() => setSettingsSaved(false), 2500); }
     } finally { setLoading(false); }
   };
+
+  const updateCallStatusOption = (id: string, patch: Partial<CallStatusOption>) => {
+    setCallStatusOptions((prev) => prev.map((option) => option.id === id ? { ...option, ...patch } : option));
+  };
+
+  const resetCallStatusOptions = () => setCallStatusOptions(defaultCallStatusOptions);
 
   const percent = (value: number, total: number) => total ? Math.round((value / total) * 100) : 0;
   const completionRate = percent(summary.totalCalled, summary.total);
@@ -217,9 +251,11 @@ export default function App() {
       return segment;
     }).join(", ")
     : "#334155 0% 100%";
+  const activeProjects = projects.filter((project) => !project.archived);
+  const archivedProjects = projects.filter((project) => project.archived);
   const topCallers = [...callers].sort((a, b) => (b.successCalls || 0) - (a.successCalls || 0) || (b.totalCalls || 0) - (a.totalCalls || 0)).slice(0, 8);
   const maxCallerCalls = Math.max(1, ...topCallers.map((caller) => caller.totalCalls || 0));
-  const topProjects = [...projects]
+  const topProjects = [...activeProjects]
     .sort((a, b) => percent(b.stats.totalCalled, b.stats.total) - percent(a.stats.totalCalled, a.stats.total))
     .slice(0, 5);
 
@@ -258,7 +294,7 @@ export default function App() {
                 <div className="input-group"><label>שם מטה / ארגון</label><input value={registerForm.organization} onChange={(e) => setRegisterForm({ ...registerForm, organization: e.target.value })} required /></div>
               </div>
               <div className="input-group"><label>מסלול</label><select value={registerForm.planId} onChange={(e) => setRegisterForm({ ...registerForm, planId: e.target.value })}><option value="monthly">חודשי - 199 ש"ח</option><option value="annual">שנתי - 1,990 ש"ח</option></select></div>
-              <div className="payment-note">בסיום ההרשמה תיפתח הודעת וואטסאפ אל מנהל המערכת. לאחר העברה בנקאית יישלח אליך קוד גישה בוואטסאפ.</div>
+              <div className="payment-note">בסיום ההרשמה הבקשה נשלחת לבדיקה פרטית של בעל המערכת. לאחר אישור התשלום יישלח אליך קוד גישה בצורה מסודרת.</div>
               {registrationRequest && <div className="result-banner success"><strong>{registrationRequest.message}</strong></div>}
               <button type="submit" className="btn-primary" disabled={loading}>{loading ? "שולח בקשה..." : "שליחת בקשת הצטרפות"}</button>
             </form>
@@ -308,7 +344,7 @@ export default function App() {
             </div>
 
             <section className="insight-card project-progress-card">
-              <div className="insight-header"><h2>התקדמות פרויקטים</h2><span>{projects.length} פרויקטים</span></div>
+              <div className="insight-header"><h2>התקדמות פרויקטים</h2><span>{activeProjects.length} פרויקטים</span></div>
               {topProjects.length === 0 ? <div className="empty-state">אין עדיין פרויקטים להצגה.</div> : <div className="project-progress-list">{topProjects.map((project) => { const done = percent(project.stats.totalCalled, project.stats.total); return <div className="project-progress-row" key={project.id}><div><strong>{project.name}</strong><span>{project.stats.totalCalled} מתוך {project.stats.total}</span></div><div className="wide-progress"><span style={{ width: done + "%" }}></span></div><b>{done}%</b></div>; })}</div>}
             </section>
 
@@ -330,20 +366,37 @@ export default function App() {
               </form>
             </div>
             <div className="projects-grid">
-              {projects.length === 0 ? <div className="empty-state">עדיין אין פרויקטים. העלה קובץ כדי להתחיל.</div> : projects.map((project) => (
+              {activeProjects.length === 0 ? <div className="empty-state">עדיין אין פרויקטים פעילים. העלה קובץ כדי להתחיל.</div> : activeProjects.map((project) => (
                 <section className="project-card" key={project.id}>
-                  <div className="project-card-header"><div><h2>{project.name}</h2><span>{project.sourceFileName || "קובץ מקומי"}</span></div><div className="project-card-actions"><strong>{project.stats.total} רשומות</strong><button type="button" onClick={() => deleteProject(project)}>מחק</button></div></div>
+                  <div className="project-card-header"><div><h2>{project.name}</h2><span>{project.sourceFileName || "קובץ מקומי"}</span></div><div className="project-card-actions"><strong>{project.stats.total} רשומות</strong><button type="button" onClick={() => deleteProject(project)}>העבר לארכיון</button></div></div>
                   <div className="project-stats-row"><span>ממתינים: {project.stats.pending}</span><span>בוצעו: {project.stats.totalCalled}</span><span>הצלחות: {project.stats.success}</span></div>
-                  <div className="sheet-link-box"><div className="sheet-actions"><a href={csvExportUrl(project)} target="_blank" rel="noreferrer">פתח CSV מתעדכן</a><a href={xlsxExportUrl(project)} target="_blank" rel="noreferrer">הורד XLSX מתעדכן</a></div><small>שתי האפשרויות כוללות את כל עמודות האקסל המקורי, ובסוף סטטוס, הערות ותאריך שיחה אחרונה.</small></div>
+                  <div className="sheet-link-box"><div className="sheet-actions"><a href={csvExportUrl(project)} target="_blank" rel="noreferrer">פתח CSV מתעדכן</a><a href={xlsxExportUrl(project)} target="_blank" rel="noreferrer">הורד XLSX מתעדכן</a></div><small>קישור הייצוא נשמר גם אחרי העברה לארכיון, כולל כל הסטטוסים והערות הטלפנים.</small></div>
                   <div className="assign-box"><label>שיוך טלפן לפרויקט לפי מספר טלפון בלבד</label><div className="assign-row assign-row-wide"><input value={callerPhoneInputs[project.id] || ""} onChange={(e) => setCallerPhoneInputs((prev) => ({ ...prev, [project.id]: e.target.value }))} placeholder="מספר טלפון של הטלפן" /><button type="button" onClick={() => assignCaller(project.id)} disabled={loading || !callerPhoneInputs[project.id]?.trim()}>שייך</button></div></div>
                   <div className="caller-chip-list">{project.callers.length === 0 ? <span className="muted-text">אין טלפנים משויכים</span> : project.callers.map((caller) => <button key={caller.id} type="button" className="caller-chip" onClick={() => unassignCaller(project.id, caller.id)} title="הסר שיוך">{caller.name || "טרם הזדהה"} · {caller.phone} ×</button>)}</div>
                 </section>
               ))}
             </div>
+            {archivedProjects.length > 0 && <section className="archived-projects-card"><div className="table-card-header"><h2>ארכיון פרויקטים</h2><span>הנתונים נשמרים ואפשר לשחזר בכל רגע</span></div>{archivedProjects.map((project) => <div className="archived-project-row" key={project.id}><div><strong>{project.name}</strong><span>{project.stats.total} רשומות · {project.stats.totalCalled} שיחות שבוצעו</span></div><div className="sheet-actions"><a href={xlsxExportUrl(project)} target="_blank" rel="noreferrer">הורד גיבוי XLSX</a><button type="button" onClick={() => restoreProject(project)} disabled={loading}>שחזר</button></div></div>)}</section>}
           </div>
         )}
         {activeTab === "settings" && (
-          <div className="tab-pane card-enter-anim"><div className="pane-header"><h1>הגדרות</h1><p>הגדרות כלליות של הודעות ותצוגת הקמפיין.</p></div><form onSubmit={handleSaveSettings} className="settings-form"><div className="settings-section"><h3>תבנית הודעת וואטסאפ</h3><textarea rows={4} value={settings.whatsapp_template} onChange={(e) => setSettings({ ...settings, whatsapp_template: e.target.value })} placeholder="שלום {name}..." /></div><div className="settings-section-row"><div className="settings-field"><label>אחוז זכייה התחלתי</label><input type="number" value={settings.win_percentage} onChange={(e) => setSettings({ ...settings, win_percentage: e.target.value })} /></div><div className="settings-field"><label>יעד שיחות</label><input type="number" value={settings.target_calls} onChange={(e) => setSettings({ ...settings, target_calls: e.target.value })} /></div></div><div className="settings-section"><label>כתובת Polymarket</label><input value={settings.polymarket_url} onChange={(e) => setSettings({ ...settings, polymarket_url: e.target.value })} /></div>{settingsSaved && <div className="result-banner success">ההגדרות נשמרו.</div>}<button type="submit" className="btn-primary" disabled={loading}>שמור הגדרות</button></form></div>
+          <div className="tab-pane card-enter-anim">
+            <div className="pane-header"><h1>הגדרות</h1><p>הגדרות כלליות של הודעות, תצוגה וסימוני שיחה.</p></div>
+            <form onSubmit={handleSaveSettings} className="settings-form">
+              <div className="settings-section"><h3>תבנית הודעת וואטסאפ</h3><textarea rows={4} value={settings.whatsapp_template} onChange={(e) => setSettings({ ...settings, whatsapp_template: e.target.value })} placeholder="שלום {name}..." /></div>
+              <div className="settings-section-row"><div className="settings-field"><label>אחוז זכייה התחלתי</label><input type="number" value={settings.win_percentage} onChange={(e) => setSettings({ ...settings, win_percentage: e.target.value })} /></div><div className="settings-field"><label>יעד שיחות</label><input type="number" value={settings.target_calls} onChange={(e) => setSettings({ ...settings, target_calls: e.target.value })} /></div></div>
+              <div className="settings-section"><label>כתובת Polymarket</label><input value={settings.polymarket_url} onChange={(e) => setSettings({ ...settings, polymarket_url: e.target.value })} /></div>
+              <div className="settings-section call-status-settings">
+                <div className="settings-section-title"><h3>אפשרויות סימון לאחר שיחה</h3><button type="button" onClick={resetCallStatusOptions}>איפוס לברירת מחדל</button></div>
+                <p>אפשר לשנות את שם הכפתורים ולהסתיר אפשרות שאינה בשימוש. המשמעות המערכתית נשארת קבועה כדי שהדוחות והסבבים החוזרים יישארו מסודרים.</p>
+                <div className="status-settings-list">
+                  {callStatusOptions.map((option) => <div className="status-setting-row" key={option.id}><label className="status-toggle"><input type="checkbox" checked={option.active} onChange={(e) => updateCallStatusOption(option.id, { active: e.target.checked })} /><span>פעיל</span></label><input value={option.label} maxLength={40} onChange={(e) => updateCallStatusOption(option.id, { label: e.target.value })} /><span className={"status-preview " + option.className}>{option.label || "ללא שם"}</span></div>)}
+                </div>
+              </div>
+              {settingsSaved && <div className="result-banner success">ההגדרות נשמרו.</div>}
+              <button type="submit" className="btn-primary" disabled={loading}>שמור הגדרות</button>
+            </form>
+          </div>
         )}
       </main>
     </div>

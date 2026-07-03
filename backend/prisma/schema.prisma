@@ -93,6 +93,7 @@ model Admin {
   passcode      String         @unique
   status        String         @default("ACTIVE")
   createdAt     DateTime       @default(now())
+  approvedAt    DateTime?
   subscriptions Subscription[]
 }
 

@@ -1366,6 +1366,24 @@
   font-weight: 800;
 }
 
+.admin-request-row.approved {
+  border-color: rgba(16, 185, 129, 0.28);
+}
+
+.admin-request-row.pending {
+  border-color: rgba(245, 158, 11, 0.28);
+}
+
+.approved-badge {
+  color: #34d399;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.22);
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .compact-empty {
   padding: 18px;
 }

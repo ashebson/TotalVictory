@@ -647,7 +647,7 @@ async function loadPrismaStore() {
   memory.callerProjects = callerProjects.map((item: any) => ({ callerId: item.callerId, projectId: item.projectId }));
   memory.callLogs = callLogs.map((item: any) => ({ ...item, timestamp: new Date(item.timestamp) }));
   memory.settings = settings.map((item: any) => ({ key: item.key, value: item.value }));
-  memory.admins = admins.map((item: any) => ({ ...item, createdAt: new Date(item.createdAt).toISOString() }));
+  memory.admins = admins.map((item: any) => ({ ...item, createdAt: new Date(item.createdAt).toISOString(), approvedAt: item.approvedAt ? new Date(item.approvedAt).toISOString() : null }));
   memory.subscriptions = subscriptions.map((item: any) => ({ ...item, createdAt: new Date(item.createdAt).toISOString() }));
   memory.ids = {
     project: nextId(memory.projects),
@@ -723,7 +723,7 @@ async function deleteCallerProject(callerId: number, projectId: number) {
 
 async function persistAdminRecord(admin: any) {
   if (!prisma) return saveMemoryStore();
-  const data = { id: Number(admin.id), fullName: admin.fullName || "", email: admin.email || "", phone: cleanPhone(admin.phone), organization: admin.organization || "", passcode: admin.passcode || generatePasscode(), status: admin.status || "PENDING", createdAt: new Date(admin.createdAt || Date.now()) };
+  const data = { id: Number(admin.id), fullName: admin.fullName || "", email: admin.email || "", phone: cleanPhone(admin.phone), organization: admin.organization || "", passcode: admin.passcode || generatePasscode(), status: admin.status || "PENDING", createdAt: new Date(admin.createdAt || Date.now()), approvedAt: admin.approvedAt ? new Date(admin.approvedAt) : null };
   await prisma.admin.upsert({ where: { id: data.id }, update: data, create: data });
 }
 
@@ -923,6 +923,15 @@ function publicAdmin(admin: any) {
   return safe;
 }
 
+function ownerAdminRegistration(admin: any) {
+  const subscription = [...memory.subscriptions].reverse().find((item) => item.adminId === admin.id);
+  return {
+    ...admin,
+    subscriptions: memory.subscriptions.filter((item) => item.adminId === admin.id),
+    latestSubscription: subscription || null,
+  };
+}
+
 function planLabel(planId: string) {
   return planId === "annual" ? 'שנתי - 1,990 ש"ח' : 'חודשי - 199 ש"ח';
 }
@@ -1034,23 +1043,23 @@ app.post("/api/admins/register", async (req, res) => {
 
 app.get("/api/admins/registration-requests", authenticateOwner, (_req, res) => {
   const requests = memory.admins
-    .filter((admin) => admin.status !== "ACTIVE")
-    .map((admin) => ({ ...publicAdmin(admin), subscriptions: memory.subscriptions.filter((item) => item.adminId === admin.id) }));
+    .map((admin) => ownerAdminRegistration(admin))
+    .sort((a, b) => Number(new Date(b.createdAt || 0)) - Number(new Date(a.createdAt || 0)));
   res.json(requests);
 });
 
 app.get("/api/admins/registration-requests.csv", authenticateOwner, (_req, res) => {
-  const headers = ["מספר בקשה", "שם מלא", "ארגון", "טלפון", "אימייל", "סטטוס", "מסלול", "תאריך הרשמה"];
-  const rows = memory.admins.filter((admin) => admin.status !== "ACTIVE").map((admin) => {
+  const headers = ["מספר בקשה", "שם מלא", "ארגון", "טלפון", "אימייל", "סטטוס", "מסלול", "תאריך הרשמה", "תאריך אישור", "קוד גישה"];
+  const rows = memory.admins.map((admin) => {
     const subscription = [...memory.subscriptions].reverse().find((item) => item.adminId === admin.id);
-    return [admin.id, admin.fullName, admin.organization, admin.phone, admin.email, admin.status, planLabel(subscription?.planId || "monthly"), admin.createdAt];
+    return [admin.id, admin.fullName, admin.organization, admin.phone, admin.email, admin.status, planLabel(subscription?.planId || "monthly"), admin.createdAt, admin.approvedAt || "", admin.passcode || ""];
   });
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", "attachment; filename=admin-registration-requests.csv");
-  res.send("﻿" + [headers, ...rows].map((row) => row.map(csvEscape).join(",")).join("\n"));
+  res.send("\ufeff" + [headers, ...rows].map((row) => row.map(csvEscape).join(",")).join("\n"));
 });
 
-app.post("/api/admins/:adminId/approve", authenticateAdmin, async (req, res) => {
+app.post("/api/admins/:adminId/approve", authenticateOwner, async (req, res) => {
   try {
     const admin = memory.admins.find((item) => item.id === Number(req.params.adminId));
     if (!admin) return res.status(404).json({ error: "Admin request not found" });

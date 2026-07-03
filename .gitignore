@@ -31,3 +31,12 @@ out/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Local Codex/Git helper files
+.ssh-project/
+.github_known_hosts
+*push*.cmd
+*rebase*.cmd
+run-update-site.cmd
+fix-push-after-reject.cmd
+finish-admin-approval-push.cmd

@@ -59,6 +59,8 @@ model Contact {
   callLogs     CallLog[]
 
   @@unique([projectId, phone])
+  @@index([projectId, status, lastCalledAt])
+  @@index([callerId])
 }
 
 model CallLog {
@@ -71,6 +73,9 @@ model CallLog {
   project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   caller    Caller   @relation(fields: [callerId], references: [id], onDelete: Cascade)
   contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([callerId, timestamp])
+  @@index([projectId, timestamp])
 }
 
 model Setting {

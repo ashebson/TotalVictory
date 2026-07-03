@@ -344,24 +344,24 @@
   gap: 24px;
 }
 
-.polymarket-card {
+.activity-card {
   height: 310px;
 }
 
-.polymarket-header {
+.activity-header {
   display: flex;
   align-items: center;
   margin-bottom: 15px;
 }
 
-.pm-brand {
+.activity-brand {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
-.pm-logo {
-  background: #004bff;
+.activity-logo {
+  background: linear-gradient(135deg, var(--primary), var(--success));
   color: white;
   width: 24px;
   height: 24px;
@@ -373,48 +373,20 @@
   font-size: 0.95rem;
 }
 
-.pm-brand h3 {
+.activity-brand h3 {
   font-size: 1.15rem;
   font-weight: 900;
-  letter-spacing: -0.5px;
+  letter-spacing: 0;
 }
 
-.pm-verified {
-  color: #004bff;
-  font-size: 0.8rem;
-  font-weight: bold;
-}
-
-.pm-toggle {
-  margin-right: auto;
-  display: flex;
-  background: rgba(255, 255, 255, 0.03);
-  padding: 3px;
-  border-radius: 10px;
-  border: 1px solid var(--card-border);
-}
-
-.pm-btn {
-  padding: 4px 12px;
-  font-size: 0.8rem;
-  font-weight: 600;
-  border-radius: 8px;
-  color: var(--text-secondary);
-}
-
-.pm-btn.active {
-  background: rgba(255, 255, 255, 0.08);
-  color: white;
-}
-
-.pm-title {
+.activity-title {
   margin-right: 20px;
   color: var(--text-muted);
   font-size: 0.9rem;
   font-weight: 500;
 }
 
-.polymarket-body {
+.activity-body {
   flex: 1;
   position: relative;
   overflow: hidden;
@@ -423,13 +395,7 @@
   border: 1px solid var(--card-border);
 }
 
-.polymarket-iframe {
-  width: 100%;
-  height: 100%;
-  border: none;
-}
-
-/* Custom built-in Polymarket Graph style */
+/* Custom activity graph style */
 .custom-graph-container {
   width: 100%;
   height: 100%;
@@ -449,13 +415,6 @@
   display: flex;
   align-items: flex-start;
   text-align: right;
-}
-
-.dollar-sign {
-  font-size: 1.5rem;
-  color: var(--success);
-  font-weight: 700;
-  margin-top: 4px;
 }
 
 .price-num {

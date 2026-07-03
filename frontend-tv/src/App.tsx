@@ -31,20 +31,19 @@ interface Stats {
   invalidNumber: number;
   leaderboard: LeaderboardEntry[];
   recentCalls: RecentCall[];
-  winPercentage: number;
   targetCalls: number;
-  polymarketUrl: string;
   campaignName: string;
 }
 
 export default function App() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [useIframe, setUseIframe] = useState(false);
-  const [chartHistory, setChartHistory] = useState<number[]>([72.1, 72.3, 72.0, 72.5, 73.1, 73.0, 73.4, 73.2, 73.8]);
+  const [chartHistory, setChartHistory] = useState<number[]>([0]);
   const [flashSuccess, setFlashSuccess] = useState(false);
   
   const lastSuccessCount = useRef<number>(0);
+
+  const getProgressPercent = (data: Stats) => Math.min(100, Math.round((data.calledContacts / Math.max(1, data.targetCalls || 1)) * 100));
 
   // Time updater
   useEffect(() => {
@@ -60,8 +59,7 @@ export default function App() {
       .then((data) => {
         setStats(data);
         lastSuccessCount.current = data.successCalls;
-        // Seed historical chart points leading up to current winPercentage
-        generateChartHistory(data.winPercentage);
+        generateChartHistory(getProgressPercent(data));
       })
       .catch((err) => console.error("Initial load failed:", err));
 
@@ -77,9 +75,8 @@ export default function App() {
         lastSuccessCount.current = updatedStats.successCalls;
       }
 
-      // Add new point to chart
       setChartHistory((prev) => {
-        const next = [...prev, updatedStats.winPercentage];
+        const next = [...prev, getProgressPercent(updatedStats)];
         if (next.length > 20) next.shift(); // limit to 20 history points
         return next;
       });
@@ -92,9 +89,9 @@ export default function App() {
 
   const generateChartHistory = (currentVal: number) => {
     const points = [];
-    let temp = currentVal - 2.5;
+    let temp = Math.max(0, currentVal - 8);
     for (let i = 0; i < 12; i++) {
-      temp += (Math.random() - 0.4) * 0.6;
+      temp = Math.min(100, Math.max(0, temp + Math.random() * 1.6));
       points.push(parseFloat(temp.toFixed(2)));
     }
     points.push(currentVal);
@@ -194,13 +191,18 @@ export default function App() {
     );
   }
 
+  const progressPercent = getProgressPercent(stats);
+  const contactCoverage = stats.totalContacts ? Math.round((stats.calledContacts / stats.totalContacts) * 100) : 0;
+  const successRate = stats.calledContacts ? Math.round((stats.successCalls / stats.calledContacts) * 100) : 0;
+  const remainingCalls = Math.max(0, stats.targetCalls - stats.calledContacts);
+
   return (
     <div className={`tv-viewport ${flashSuccess ? "flash-success-screen" : ""}`}>
       {/* SUCCESS POPUP OVERLAY */}
       {flashSuccess && (
         <div className="success-overlay">
           <div className="success-overlay-card">
-            <span className="celebrate-emoji">⚡ SUCCESS! ⚡</span>
+            <span className="celebrate-emoji">נוספה הצלחה</span>
             <h2>נוספה שיחה מוצלחת!</h2>
             <p className="flash-voter-note">איש קשר נוסף הבטיח את תמיכתו</p>
           </div>
@@ -238,17 +240,17 @@ export default function App() {
                   className="gauge-progress"
                   style={{
                     strokeDasharray: 440,
-                    strokeDashoffset: 440 - (440 * stats.winPercentage) / 100,
+                    strokeDashoffset: 440 - (440 * progressPercent) / 100,
                   }}
                 />
               </svg>
               <div className="gauge-center">
-                <span className="gauge-percent-num">{stats.winPercentage}%</span>
+                <span className="gauge-percent-num">{progressPercent}%</span>
                 <span className="gauge-label">מדד התקדמות</span>
               </div>
             </div>
             <div className="gauge-trend">
-              <span className="trend-arrow">▲</span> 24ש: +1.4%
+              <span className="trend-arrow">▲</span> כיסוי רשומות: {contactCoverage}%
             </div>
           </div>
 
@@ -270,12 +272,12 @@ export default function App() {
             <div className="tv-progress-box">
               <div className="progress-text">
                 <span>התקדמות יעד ({stats.calledContacts} / {stats.targetCalls})</span>
-                <span>{Math.round((stats.calledContacts / stats.targetCalls) * 100)}%</span>
+                <span>{progressPercent}%</span>
               </div>
               <div className="tv-progress-bg">
                 <div 
                   className="tv-progress-fill" 
-                  style={{ width: `${Math.min(100, (stats.calledContacts / stats.targetCalls) * 100)}%` }}
+                  style={{ width: `${progressPercent}%` }}
                 ></div>
               </div>
             </div>
@@ -285,62 +287,39 @@ export default function App() {
         {/* CENTER CONTENT: Activity Widget & Leaderboards */}
         <main className="tv-center-content">
           {/* Activity Widget */}
-          <div className="tv-card polymarket-card">
-            <div className="polymarket-header">
-              <div className="pm-brand">
-                <span className="pm-logo">P</span>
+          <div className="tv-card activity-card">
+            <div className="activity-header">
+              <div className="activity-brand">
+                <span className="activity-logo">%</span>
                 <h3>מדד פעילות</h3>
-                <span className="pm-verified">✓</span>
               </div>
-              <div className="pm-toggle">
-                <button 
-                  className={`pm-btn ${!useIframe ? "active" : ""}`}
-                  onClick={() => setUseIframe(false)}
-                >
-                  גרף מובנה
-                </button>
-                <button 
-                  className={`pm-btn ${useIframe ? "active" : ""}`}
-                  onClick={() => setUseIframe(true)}
-                >
-                  Iframe
-                </button>
-              </div>
-              <span className="pm-title">מדד פעילות הקמפיין</span>
+              <span className="activity-title">תמונת מצב בזמן אמת</span>
             </div>
 
-            <div className="polymarket-body">
-              {!useIframe ? (
-                /* Built-in high fidelity graph */
-                <div className="custom-graph-container">
-                  <div className="graph-stats">
-                    <div className="graph-price">
-                      <span className="dollar-sign">¢</span>
-                      <span className="price-num">{Math.round(stats.winPercentage)}</span>
-                      <span className="price-unit">מדד</span>
+            <div className="activity-body">
+              <div className="custom-graph-container">
+                <div className="graph-stats">
+                  <div className="graph-price">
+                    <span className="price-num">{progressPercent}</span>
+                    <span className="price-unit">% מהיעד</span>
+                  </div>
+                  <div className="graph-metrics">
+                    <div className="metric">
+                      <span className="metric-label">אחוז הצלחה</span>
+                      <span className="metric-val">{successRate}%</span>
                     </div>
-                    <div className="graph-metrics">
-                      <div className="metric">
-                        <span className="metric-label">פעילות 24ש</span>
-                        <span className="metric-val">$184.2K</span>
-                      </div>
-                      <div className="metric">
-                        <span className="metric-label">סך הכל שיחות</span>
-                        <span className="metric-val">1,842</span>
-                      </div>
+                    <div className="metric">
+                      <span className="metric-label">כיסוי רשומות</span>
+                      <span className="metric-val">{contactCoverage}%</span>
+                    </div>
+                    <div className="metric">
+                      <span className="metric-label">נותרו ליעד</span>
+                      <span className="metric-val">{remainingCalls.toLocaleString("he-IL")}</span>
                     </div>
                   </div>
-                  {renderSVGChart()}
                 </div>
-              ) : (
-                /* Iframe display */
-                <iframe
-                  src={stats.polymarketUrl}
-                  title="Campaign activity"
-                  className="polymarket-iframe"
-                  sandbox="allow-scripts allow-same-origin"
-                ></iframe>
-              )}
+                {renderSVGChart()}
+              </div>
             </div>
           </div>
 

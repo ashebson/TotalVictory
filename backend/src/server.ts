@@ -11,6 +11,9 @@ import fs from "fs/promises";
 import nodemailer from "nodemailer";
 
 const DATA_FILE = path.resolve(process.cwd(), "data/local-db.json");
+const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || "20mb";
+const MAX_UPLOAD_BYTES = Number.parseInt(process.env.MAX_UPLOAD_BYTES || String(15 * 1024 * 1024), 10);
+const MAX_CONTACTS_PER_UPLOAD = Number.parseInt(process.env.MAX_CONTACTS_PER_UPLOAD || "50000", 10);
 
 const app = express();
 const server = http.createServer(app);
@@ -22,7 +25,7 @@ const io = new Server(server, {
 
 app.use(cors());
 
-app.use(express.json({ limit: "50mb" }));
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 type Project = { id: number; name: string; sourceFileName?: string | null; sourceHeaders?: string[]; createdAt: Date };
 type Caller = { id: number; name: string; phone: string; whatsappTemplate?: string | null; createdAt: Date };
@@ -210,8 +213,7 @@ function authenticateAdmin(req: express.Request, res: express.Response, next: ex
     || (typeof queryPasscode === "string" ? queryPasscode : undefined);
 
   if (!passcode) {
-    // Legacy fallback: allow request if passcode is missing (since old frontend doesn't send passcode headers)
-    return next();
+    return res.status(401).json({ error: "Admin passcode is required" });
   }
   
   if (passcode === "halevi2026") {
@@ -229,24 +231,10 @@ function authenticateAdmin(req: express.Request, res: express.Response, next: ex
 function authenticateCaller(req: express.Request, res: express.Response, next: express.NextFunction) {
   const phoneHeader = req.headers["x-caller-phone"];
   const callerIdQuery = req.query.callerId || req.body.callerId;
+  const callerIdParam = req.params.callerId;
   
   if (!phoneHeader) {
-    // Legacy fallback: allow request if phone header is missing, but check caller parameters if provided
-    if (callerIdQuery) {
-      const caller = memory.callers.find((item) => item.id === Number(callerIdQuery));
-      if (!caller) {
-        return res.status(401).json({ error: "Caller not found" });
-      }
-    } else {
-      const callerIdParam = req.params.callerId;
-      if (callerIdParam) {
-        const caller = memory.callers.find((item) => item.id === Number(callerIdParam));
-        if (!caller) {
-          return res.status(401).json({ error: "Caller not found" });
-        }
-      }
-    }
-    return next();
+    return res.status(401).json({ error: "Caller phone is required" });
   }
   
   const normalizedPhone = cleanPhone(phoneHeader);
@@ -255,10 +243,12 @@ function authenticateCaller(req: express.Request, res: express.Response, next: e
     return res.status(401).json({ error: "Caller phone not registered" });
   }
   
-  if (callerIdQuery && Number(callerIdQuery) !== caller.id) {
+  const requestedCallerId = callerIdQuery || callerIdParam;
+  if (requestedCallerId && Number(requestedCallerId) !== caller.id) {
     return res.status(403).json({ error: "Caller ID mismatch" });
   }
   
+  (req as any).caller = caller;
   next();
 }
 
@@ -534,11 +524,31 @@ function projectExportXlsx(projectId: number) {
   return XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
 }
 
+function assertUploadPayloadSize(payload: any) {
+  const base64Content = payload.fileContentBase64 ? String(payload.fileContentBase64) : "";
+  const textContent = payload.fileText ? String(payload.fileText) : "";
+  const estimatedBytes = base64Content ? Buffer.byteLength(base64Content, "base64") : Buffer.byteLength(textContent, "utf8");
+  if (estimatedBytes > MAX_UPLOAD_BYTES) {
+    const maxMb = Math.floor(MAX_UPLOAD_BYTES / 1024 / 1024);
+    throw new Error("הקובץ גדול מדי לעיבוד בטוח. נסה לפצל אותו לקבצים קטנים יותר, עד " + maxMb + "MB לקובץ.");
+  }
+}
+
+function enforceUploadContactLimit(contacts: any[]) {
+  if (contacts.length > MAX_CONTACTS_PER_UPLOAD) {
+    throw new Error("הקובץ מכיל יותר מדי רשומות להעלאה אחת. נסה לפצל אותו לקבצים של עד " + MAX_CONTACTS_PER_UPLOAD.toLocaleString("he-IL") + " רשומות.");
+  }
+  return contacts;
+}
+
 function parseUploadedContacts(payload: any) {
-  if (Array.isArray(payload.contacts)) return payload.contacts;
-  if (payload.fileContentBase64 && String(payload.fileName || "").toLowerCase().endsWith(".xlsx")) return parseXlsx(payload.fileContentBase64);
-  if (payload.fileText) return parseCsv(String(payload.fileText));
-  throw new Error("לא התקבל קובץ נתונים תקין");
+  assertUploadPayloadSize(payload);
+  let contacts: any[];
+  if (Array.isArray(payload.contacts)) contacts = payload.contacts;
+  else if (payload.fileContentBase64 && String(payload.fileName || "").toLowerCase().endsWith(".xlsx")) contacts = parseXlsx(payload.fileContentBase64);
+  else if (payload.fileText) contacts = parseCsv(String(payload.fileText));
+  else throw new Error("לא התקבל קובץ נתונים תקין");
+  return enforceUploadContactLimit(contacts);
 }
 
 function projectStats(projectId: number) {
@@ -814,6 +824,95 @@ function insertContacts(projectId: number, contacts: any[]) {
   return { inserted, skipped };
 }
 
+function normalizeDbContact(row: any): Contact {
+  return {
+    id: Number(row.id),
+    projectId: Number(row.projectId),
+    name: row.name,
+    phone: cleanPhone(row.phone),
+    city: row.city || null,
+    sector: row.sector || null,
+    familySize: row.familySize ?? null,
+    notes: row.notes || null,
+    callNotes: row.callNotes || null,
+    sourceData: row.sourceData || null,
+    status: row.status || "PENDING",
+    lastCalledAt: row.lastCalledAt ? new Date(row.lastCalledAt) : null,
+    callerId: row.callerId == null ? null : Number(row.callerId),
+  };
+}
+
+function syncMemoryContact(contact: Contact | null) {
+  if (!contact) return null;
+  const existing = memory.contacts.find((item) => item.id === contact.id);
+  if (existing) Object.assign(existing, contact);
+  else memory.contacts.push(contact);
+  return contact;
+}
+
+async function allocateNextContact(callerId: number, projectId: number) {
+  const retryAfter = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  const reservedAt = new Date();
+
+  if (prisma) {
+    const rows = await prisma.$transaction((tx) => tx.$queryRaw<any[]>`
+      WITH next_contact AS (
+        SELECT id
+        FROM "Contact"
+        WHERE "projectId" = ${projectId}
+          AND (
+            (
+              status = 'PENDING'
+              AND ("lastCalledAt" IS NULL OR "lastCalledAt" < ${retryAfter})
+              AND ("callerId" IS NULL OR "callerId" = ${callerId} OR "lastCalledAt" < ${retryAfter})
+            )
+            OR (
+              status = 'NO_ANSWER'
+              AND "lastCalledAt" IS NOT NULL
+              AND "lastCalledAt" < ${retryAfter}
+              AND ("callerId" IS NULL OR "callerId" = ${callerId} OR "lastCalledAt" < ${retryAfter})
+            )
+          )
+        ORDER BY
+          CASE
+            WHEN status = 'PENDING' AND "lastCalledAt" IS NULL THEN 0
+            WHEN status = 'PENDING' THEN 1
+            ELSE 2
+          END,
+          "lastCalledAt" ASC NULLS FIRST,
+          id ASC
+        FOR UPDATE SKIP LOCKED
+        LIMIT 1
+      )
+      UPDATE "Contact"
+      SET "callerId" = ${callerId}, "lastCalledAt" = ${reservedAt}
+      WHERE id IN (SELECT id FROM next_contact)
+      RETURNING id, "projectId", name, phone, city, sector, "familySize", notes, "callNotes", "sourceData", status, "lastCalledAt", "callerId"
+    `);
+    return syncMemoryContact(rows[0] ? normalizeDbContact(rows[0]) : null);
+  }
+
+  return enqueueContactAllocation(async () => {
+    const isAvailable = (item: Contact) => item.callerId == null || item.callerId === callerId || Boolean(item.lastCalledAt && item.lastCalledAt < retryAfter);
+    const untouchedContact = memory.contacts
+      .filter((item) => item.projectId === projectId && item.status === "PENDING" && item.lastCalledAt == null && isAvailable(item))
+      .sort((a, b) => a.id - b.id)[0] || null;
+    const stalePendingContact = memory.contacts
+      .filter((item) => item.projectId === projectId && item.status === "PENDING" && isAvailable(item) && item.lastCalledAt && item.lastCalledAt < retryAfter)
+      .sort((a, b) => Number(a.lastCalledAt) - Number(b.lastCalledAt))[0] || null;
+    const retryContact = memory.contacts
+      .filter((item) => item.projectId === projectId && item.status === "NO_ANSWER" && isAvailable(item) && item.lastCalledAt && item.lastCalledAt < retryAfter)
+      .sort((a, b) => Number(a.lastCalledAt) - Number(b.lastCalledAt))[0] || null;
+    const nextContact = untouchedContact || stalePendingContact || retryContact;
+    if (nextContact) {
+      nextContact.callerId = callerId;
+      nextContact.lastCalledAt = reservedAt;
+      await persistContact(nextContact);
+    }
+    return nextContact;
+  });
+}
+
 function generatePasscode() {
   return "admin-" + Math.random().toString(36).slice(2, 8);
 }
@@ -868,9 +967,9 @@ app.post("/api/login", async (req, res) => {
     if (!name || !String(name).trim()) return res.status(400).json({ error: "Name is required" });
     if (normalizedPhone.length < 9) return res.status(400).json({ error: "Valid phone is required" });
     const caller = ensureCaller(String(name), normalizedPhone);
-    res.json({ ...caller, projects: getCallerProjects(caller.id) });
     await persistCaller(caller);
     broadcastStatsUpdate();
+    res.json({ ...caller, projects: getCallerProjects(caller.id) });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
@@ -994,9 +1093,9 @@ app.post("/api/projects/upload", authenticateAdmin, async (req, res) => {
     memory.projects.push(project);
     const previousContactCount = memory.contacts.filter((contact) => contact.projectId === project.id).length;
     const result = insertContacts(project.id, contacts);
-    res.json({ success: true, project: serializeProject(project), ...result });
     await persistProjectUpload(project, previousContactCount);
     broadcastStatsUpdate();
+    res.json({ success: true, project: serializeProject(project), ...result });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
@@ -1024,9 +1123,9 @@ app.delete("/api/projects/:projectId", authenticateAdmin, async (req, res) => {
   const project = memory.projects.find((item) => item.id === projectId);
   if (!project) return res.status(404).json({ error: "Project not found" });
   setProjectArchived(projectId, true);
-  res.json({ success: true, archived: true, project: serializeProject(project) });
   await persistSettingsOnly();
   broadcastStatsUpdate();
+  res.json({ success: true, archived: true, project: serializeProject(project) });
 });
 
 app.post("/api/projects/:projectId/restore", authenticateAdmin, async (req, res) => {
@@ -1034,9 +1133,9 @@ app.post("/api/projects/:projectId/restore", authenticateAdmin, async (req, res)
   const project = memory.projects.find((item) => item.id === projectId);
   if (!project) return res.status(404).json({ error: "Project not found" });
   setProjectArchived(projectId, false);
-  res.json({ success: true, archived: false, project: serializeProject(project) });
   await persistSettingsOnly();
   broadcastStatsUpdate();
+  res.json({ success: true, archived: false, project: serializeProject(project) });
 });
 
 app.post("/api/projects/:projectId/callers", authenticateAdmin, async (req, res) => {
@@ -1048,10 +1147,10 @@ app.post("/api/projects/:projectId/callers", authenticateAdmin, async (req, res)
     if (phone.length < 9) return res.status(400).json({ error: "Valid caller phone is required" });
     const caller = ensureCaller(undefined, phone);
     linkCallerToProject(caller.id, projectId);
-    res.json({ success: true, project: serializeProject(project), caller });
     await persistCaller(caller);
     await persistCallerProject(caller.id, projectId);
     broadcastStatsUpdate();
+    res.json({ success: true, project: serializeProject(project), caller });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
@@ -1059,9 +1158,9 @@ app.delete("/api/projects/:projectId/callers/:callerId", authenticateAdmin, asyn
   const projectId = Number(req.params.projectId);
   const callerId = Number(req.params.callerId);
   memory.callerProjects = memory.callerProjects.filter((link) => !(link.projectId === projectId && link.callerId === callerId));
-  res.json({ success: true });
   await deleteCallerProject(callerId, projectId);
   broadcastStatsUpdate();
+  res.json({ success: true });
 });
 
 app.get("/api/contacts/next", authenticateCaller, async (req, res) => {
@@ -1073,30 +1172,15 @@ app.get("/api/contacts/next", authenticateCaller, async (req, res) => {
     const allowed = memory.callerProjects.some((link) => link.callerId === callerId && link.projectId === projectId);
     if (!allowed) return res.status(403).json({ error: "Caller is not assigned to this project" });
 
-    const contact = await enqueueContactAllocation(async () => {
-      const retryAfter = new Date(Date.now() - 3 * 60 * 60 * 1000);
-      const isAvailable = (item: Contact) => item.callerId == null || item.callerId === callerId || (item.lastCalledAt && item.lastCalledAt < retryAfter);
-      const untouchedContact = memory.contacts
-        .filter((item) => item.projectId === projectId && item.status === "PENDING" && item.lastCalledAt == null && isAvailable(item))
-        .sort((a, b) => a.id - b.id)[0] || null;
-      const retryContact = memory.contacts
-        .filter((item) => item.projectId === projectId && item.status === "NO_ANSWER" && isAvailable(item) && item.lastCalledAt && item.lastCalledAt < retryAfter)
-        .sort((a, b) => Number(a.lastCalledAt) - Number(b.lastCalledAt))[0] || null;
-      const nextContact = untouchedContact || retryContact;
-      if (nextContact) {
-        nextContact.callerId = callerId;
-        nextContact.lastCalledAt = new Date();
-        await persistContact(nextContact);
-      }
-      return nextContact;
-    });
-
+    const contact = await allocateNextContact(callerId, projectId);
     res.json(contact);
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
 app.post("/api/contacts/skip", authenticateCaller, async (req, res) => {
+  const caller = (req as any).caller as Caller | undefined;
   const contact = memory.contacts.find((item) => item.id === Number(req.body.contactId));
+  if (contact && caller && contact.callerId !== caller.id) return res.status(403).json({ error: "Contact is not assigned to this caller" });
   if (contact) { contact.callerId = null; contact.lastCalledAt = null; await persistContact(contact); }
   res.json({ success: true });
 });
@@ -1107,17 +1191,20 @@ app.post("/api/calls", authenticateCaller, async (req, res) => {
     const contactId = Number(req.body.contactId);
     const status = String(req.body.status || "");
     const callNotes = String(req.body.callNotes || "").trim().slice(0, 500);
-    const validStatuses = defaultCallStatusOptions.map((item) => item.id);
+    const validStatuses = getCallStatusOptions().filter((item) => item.active).map((item) => item.id);
     if (!callerId || !contactId || !validStatuses.includes(status)) return res.status(400).json({ error: "Invalid call payload" });
     const contact = memory.contacts.find((item) => item.id === contactId);
     if (!contact) return res.status(404).json({ error: "Contact not found" });
+    const allowed = memory.callerProjects.some((link) => link.callerId === callerId && link.projectId === contact.projectId);
+    if (!allowed) return res.status(403).json({ error: "Caller is not assigned to this project" });
+    if (contact.callerId !== callerId) return res.status(409).json({ error: "Contact is not assigned to this caller" });
     contact.status = status; contact.callNotes = callNotes || null; contact.lastCalledAt = new Date(); contact.callerId = callerId;
     const log = { id: memory.ids.callLog++, projectId: contact.projectId, callerId, contactId, status, timestamp: new Date() };
     memory.callLogs.push(log);
-    res.json({ ...log, caller: memory.callers.find((caller) => caller.id === callerId), contact });
     await persistContact(contact);
     await persistCallLog(log);
     broadcastStatsUpdate();
+    res.json({ ...log, caller: memory.callers.find((caller) => caller.id === callerId), contact });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
@@ -1144,9 +1231,9 @@ app.post("/api/settings", authenticateAdmin, async (req, res) => {
     const existing = memory.settings.find((item) => item.key === key);
     if (existing) existing.value = String(value); else memory.settings.push({ key, value: String(value) });
   }
-  res.json({ success: true });
   await persistSettingsOnly();
   broadcastStatsUpdate();
+  res.json({ success: true });
 });
 
 app.post("/api/contacts/upload", authenticateAdmin, async (req, res) => {
@@ -1156,10 +1243,10 @@ app.post("/api/contacts/upload", authenticateAdmin, async (req, res) => {
     if (!project) { project = { id: memory.ids.project++, name: "פרויקט ראשי", sourceFileName: null, createdAt: new Date() }; memory.projects.push(project); isNewProject = true; }
     const previousContactCount = memory.contacts.filter((contact) => contact.projectId === project.id).length;
     const result = insertContacts(project.id, req.body.contacts || []);
-    res.json({ success: true, ...result, project: serializeProject(project) });
     if (isNewProject) await persistProject(project);
     await persistProjectUpload(project, previousContactCount);
     broadcastStatsUpdate();
+    res.json({ success: true, ...result, project: serializeProject(project) });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
@@ -1175,11 +1262,11 @@ app.post("/api/contacts/seed", authenticateAdmin, async (_req, res) => {
   const previousContactCount = memory.contacts.filter((contact) => contact.projectId === project.id).length;
   const result = insertContacts(project.id, contacts);
   if (memory.callers.length) linkCallerToProject(memory.callers[0].id, project.id);
-  res.json({ success: true, seededCount: result.inserted, project: serializeProject(project) });
   await persistProject(project);
   await persistProjectUpload(project, previousContactCount);
   if (memory.callers.length) await persistCallerProject(memory.callers[0].id, project.id);
   broadcastStatsUpdate();
+  res.json({ success: true, seededCount: result.inserted, project: serializeProject(project) });
 });
 
 app.post("/api/contacts/reset", authenticateOwner, async (_req, res) => {

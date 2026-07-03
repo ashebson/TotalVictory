@@ -11,6 +11,7 @@ type Summary = { total: number; pending: number; success: number; notInterested:
 type Caller = { id: number; name: string; phone?: string; totalCalls?: number; successCalls?: number; successRate?: number; lastCallTime?: string | null; projects?: Project[] };
 type Project = { id: number; name: string; sourceFileName?: string | null; createdAt: string; stats: Summary; callers: Caller[]; archived?: boolean };
 type CallStatusOption = { id: string; label: string; active: boolean; className: string };
+type AdminRequest = { id: number; fullName: string; email: string; phone: string; organization: string; status: string; createdAt: string; subscriptions?: { planId?: string; status?: string }[] };
 
 const defaultCallStatusOptions: CallStatusOption[] = [
   { id: "SUCCESS", label: "שיחה מוצלחת", active: true, className: "success" },
@@ -29,6 +30,8 @@ export default function App() {
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [registerForm, setRegisterForm] = useState({ fullName: "", email: "", phone: "", organization: "", planId: "monthly" });
   const [registrationRequest, setRegistrationRequest] = useState<{ message: string } | null>(null);
+  const [adminRequests, setAdminRequests] = useState<AdminRequest[]>([]);
+  const [approvedAdmin, setApprovedAdmin] = useState<{ name: string; passcode: string; whatsappUrl?: string } | null>(null);
 
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const [summary, setSummary] = useState<Summary>(emptySummary);
@@ -43,6 +46,7 @@ export default function App() {
   const [settings, setSettings] = useState({ campaign_name: "מטה טלפנים דיגיטלי", target_calls: "5000", whatsapp_template: "" });
   const [callStatusOptions, setCallStatusOptions] = useState<CallStatusOption[]>(defaultCallStatusOptions);
   const [settingsSaved, setSettingsSaved] = useState(false);
+  const isOwner = (sessionStorage.getItem("admin_passcode") || passcode) === "halevi2026";
 
     const getAdminHeaders = (extraHeaders: Record<string, string> = {}) => {
     const savedPass = sessionStorage.getItem("admin_passcode") || passcode;
@@ -69,6 +73,7 @@ export default function App() {
     if (!isAuthenticated) return;
     fetchData();
     fetchSettings();
+    if (isOwner) fetchAdminRequests();
     const interval = window.setInterval(fetchData, 10000);
     return () => window.clearInterval(interval);
   }, [isAuthenticated]);
@@ -81,6 +86,14 @@ export default function App() {
     setCallers(data.callers || []);
     setProjects(data.projects || []);
 
+  };
+
+  const fetchAdminRequests = async () => {
+    if (!isOwner) return;
+    const res = await fetch(API_URL + "/api/admins/registration-requests", { headers: getAdminHeaders() });
+    if (!res.ok) return;
+    const data = await res.json();
+    setAdminRequests(Array.isArray(data) ? data : []);
   };
 
   const fetchSettings = async () => {
@@ -216,6 +229,24 @@ export default function App() {
 
   const csvExportUrl = (project: Project) => API_URL + "/api/projects/" + project.id + "/export.csv?passcode=" + encodeURIComponent(sessionStorage.getItem("admin_passcode") || passcode);
   const xlsxExportUrl = (project: Project) => API_URL + "/api/projects/" + project.id + "/export.xlsx?passcode=" + encodeURIComponent(sessionStorage.getItem("admin_passcode") || passcode);
+
+  const approveAdminRequest = async (request: AdminRequest) => {
+    const approved = window.confirm("לאשר את " + request.fullName + " כמנהל פעיל וליצור לו קוד גישה?");
+    if (!approved) return;
+    setLoading(true);
+    setApprovedAdmin(null);
+    try {
+      const res = await fetch(API_URL + "/api/admins/" + request.id + "/approve", { method: "POST", headers: getAdminHeaders() });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "approval failed");
+      setApprovedAdmin({ name: request.fullName, passcode: data.passcode, whatsappUrl: data.whatsappUrl });
+      fetchAdminRequests();
+    } catch {
+      alert("לא ניתן לאשר את המנהל כרגע.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -390,7 +421,8 @@ export default function App() {
               <div className="settings-section"><label>שם המטה / הפרויקט</label><input value={settings.campaign_name} onChange={(e) => setSettings({ ...settings, campaign_name: e.target.value })} placeholder="מטה טלפנים דיגיטלי" /></div>
               <div className="settings-section"><h3>תבנית הודעת וואטסאפ</h3><textarea rows={4} value={settings.whatsapp_template} onChange={(e) => setSettings({ ...settings, whatsapp_template: e.target.value })} placeholder="שלום {name}..." /></div>
               <div className="settings-section"><label>יעד שיחות</label><input type="number" value={settings.target_calls} onChange={(e) => setSettings({ ...settings, target_calls: e.target.value })} /></div>
-              <div className="settings-section owner-export-settings"><h3>נרשמים כמנהלי מערכת</h3><p>רק קוד הבעלים הראשי יכול להוריד את רשימת בקשות ההרשמה.</p><div className="sheet-actions"><a href={API_URL + "/api/admins/registration-requests.csv?passcode=" + encodeURIComponent(sessionStorage.getItem("admin_passcode") || passcode)} target="_blank" rel="noreferrer">הורד רשימת נרשמים CSV</a></div></div>
+
+              {isOwner && <div className="settings-section admin-requests-panel"><div className="settings-section-title"><h3>בקשות מנהלים לאישור</h3><button type="button" onClick={fetchAdminRequests}>רענן</button></div><p>כאן מאשרים מנהל חדש אחרי שווידאת שהתשלום התקבל. לאחר האישור מוצג קוד הגישה שלו.</p>{approvedAdmin && <div className="result-banner success"><strong>{approvedAdmin.name} אושר.</strong><div>קוד גישה: <b>{approvedAdmin.passcode}</b></div>{approvedAdmin.whatsappUrl && <a href={approvedAdmin.whatsappUrl} target="_blank" rel="noreferrer">פתח הודעת וואטסאפ מוכנה</a>}</div>}{adminRequests.length === 0 ? <div className="empty-state compact-empty">אין כרגע בקשות שממתינות לאישור.</div> : <div className="admin-request-list">{adminRequests.map((request) => { const subscription = request.subscriptions?.[request.subscriptions.length - 1]; return <div className="admin-request-row" key={request.id}><div><strong>{request.fullName}</strong><span>{request.organization} · {request.phone} · {request.email}</span><small>סטטוס: {request.status} · מסלול: {subscription?.planId || "monthly"}</small></div><button type="button" onClick={() => approveAdminRequest(request)} disabled={loading}>אשר מנהל</button></div>; })}</div>}<div className="sheet-actions"><a href={API_URL + "/api/admins/registration-requests.csv?passcode=" + encodeURIComponent(sessionStorage.getItem("admin_passcode") || passcode)} target="_blank" rel="noreferrer">הורד רשימת נרשמים CSV</a></div></div>}
               <div className="settings-section call-status-settings">
                 <div className="settings-section-title"><h3>אפשרויות סימון לאחר שיחה</h3><button type="button" onClick={resetCallStatusOptions}>איפוס לברירת מחדל</button></div>
                 <p>אפשר לשנות את שם הכפתורים ולהסתיר אפשרות שאינה בשימוש. המשמעות המערכתית נשארת קבועה כדי שהדוחות והסבבים החוזרים יישארו מסודרים.</p>

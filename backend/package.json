@@ -9,7 +9,8 @@
     "start": "node dist/server.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "test": "node ../tests/run-system-tests.js --backend-only"
   },
   "dependencies": {
     "@prisma/client": "^5.10.2",

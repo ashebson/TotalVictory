@@ -871,3 +871,10 @@
     align-items: stretch;
   }
 }
+
+
+.call-notes-section label span {
+  color: rgba(148, 163, 184, 0.95);
+  font-weight: 600;
+  font-size: 0.88em;
+}

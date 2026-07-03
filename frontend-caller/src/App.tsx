@@ -5,7 +5,7 @@ import "./App.css";
 const PUBLIC_API_URL = "https://total-victory.onrender.com";
 const LOCAL_API_URL = window.location.protocol + "//" + window.location.hostname + ":5001";
 const API_URL = (import.meta.env.VITE_API_URL || (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" ? LOCAL_API_URL : PUBLIC_API_URL)).replace(/\/$/, "");
-const DEFAULT_WHATSAPP_TEMPLATE = "שלום {שם פרטי}, דיברנו עכשיו בטלפון. נשמח לתמיכתך בחבר הכנסת עמית הלוי. ביחד ננצח!";
+const DEFAULT_WHATSAPP_TEMPLATE = "שלום {שם פרטי}, דיברנו עכשיו בטלפון. נשמח לתמיכתך במועמד/ת במסגרת מערכת הבחירות. ביחד נצליח!";
 
 type Project = {
   id: number;
@@ -32,6 +32,15 @@ type Contact = {
   status: string;
 };
 
+type CallStatusOption = { id: string; label: string; active: boolean; className: string };
+
+const defaultCallStatusOptions: CallStatusOption[] = [
+  { id: "SUCCESS", label: "שיחה מוצלחת", active: true, className: "success" },
+  { id: "NOT_INTERESTED", label: "לא מעוניין", active: true, className: "no-interest" },
+  { id: "NO_ANSWER", label: "אין מענה", active: true, className: "no-answer" },
+  { id: "INVALID_NUMBER", label: "מספר שגוי", active: true, className: "invalid" },
+];
+
 export default function App() {
   const [caller, setCaller] = useState<Caller | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -47,6 +56,8 @@ export default function App() {
   const [statusSelection, setStatusSelection] = useState<string | null>(null);
   const [callNotes, setCallNotes] = useState("");
   const [globalWhatsappTemplate, setGlobalWhatsappTemplate] = useState(DEFAULT_WHATSAPP_TEMPLATE);
+  const [campaignName, setCampaignName] = useState("מטה טלפנים דיגיטלי");
+  const [callStatusOptions, setCallStatusOptions] = useState<CallStatusOption[]>(defaultCallStatusOptions);
   const [personalWhatsappTemplate, setPersonalWhatsappTemplate] = useState("");
   const [showTemplateSettings, setShowTemplateSettings] = useState(false);
   const [templateSaved, setTemplateSaved] = useState(false);
@@ -77,6 +88,12 @@ export default function App() {
 
   useEffect(() => {
     fetchSettings();
+    const interval = window.setInterval(fetchSettings, 30000);
+    window.addEventListener("focus", fetchSettings);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", fetchSettings);
+    };
   }, []);
 
   useEffect(() => {
@@ -89,9 +106,19 @@ export default function App() {
       if (res.ok) {
         const settings = await res.json();
         setGlobalWhatsappTemplate(settings.whatsapp_template || DEFAULT_WHATSAPP_TEMPLATE);
+        setCampaignName(settings.campaign_name || "מטה טלפנים דיגיטלי");
+        try {
+          const parsed = JSON.parse(settings.call_status_options || "[]");
+          const byId = new Map(parsed.map((item: CallStatusOption) => [item.id, item]));
+          const merged = defaultCallStatusOptions.map((option) => ({ ...option, ...(byId.get(option.id) || {}) }));
+          const active = merged.filter((option) => option.active !== false);
+          setCallStatusOptions(active.length ? active : defaultCallStatusOptions);
+        } catch {
+          setCallStatusOptions(defaultCallStatusOptions);
+        }
       }
     } catch {
-      // UI can still work without a WhatsApp template.
+      // UI can still work without remote settings.
     }
   };
 
@@ -224,6 +251,7 @@ export default function App() {
 
   const triggerSwipe = (_direction: "right") => {
     if (isAnimating || !currentContact) return;
+    fetchSettings();
     setIsAnimating(true);
     setSwipeDirection("right");
     window.setTimeout(() => {
@@ -290,8 +318,8 @@ export default function App() {
       <div className="login-container">
         <form className="login-card card-enter-anim" onSubmit={handleLogin}>
           <div className="logo-section">
-            <span className="logo-badge">פריימריז 2026</span>
-            <h1>מטה עמית הלוי</h1>
+            <span className="logo-badge">מערכת בחירות</span>
+            <h1>{campaignName}</h1>
             <h2>מערכת טלפנים חכמה</h2>
           </div>
           {errorMsg && <div className="error-banner">{errorMsg}</div>}
@@ -393,14 +421,11 @@ export default function App() {
                   <hr className="divider" />
                   <a href={"tel:" + currentContact.phone} className="btn-call-trigger"><span className="phone-icon">☎</span>חייג אל {currentContact.name}<span className="phone-number">{currentContact.phone}</span></a>
                   <div className="status-selector-section"><h3>עדכן תוצאת שיחה:</h3><div className="status-grid">
-                    <button type="button" onClick={() => setStatusSelection("SUCCESS")} className={"status-btn success " + (statusSelection === "SUCCESS" ? "active" : "")}>שיחה מוצלחת</button>
-                    <button type="button" onClick={() => setStatusSelection("NOT_INTERESTED")} className={"status-btn no-interest " + (statusSelection === "NOT_INTERESTED" ? "active" : "")}>לא מעוניין</button>
-                    <button type="button" onClick={() => setStatusSelection("NO_ANSWER")} className={"status-btn no-answer " + (statusSelection === "NO_ANSWER" ? "active" : "")}>אין מענה</button>
-                    <button type="button" onClick={() => setStatusSelection("INVALID_NUMBER")} className={"status-btn invalid " + (statusSelection === "INVALID_NUMBER" ? "active" : "")}>מספר שגוי</button>
+                    {callStatusOptions.map((option) => <button key={option.id} type="button" onClick={() => setStatusSelection(option.id)} className={"status-btn " + option.className + " " + (statusSelection === option.id ? "active" : "")}>{option.label}</button>)}
                   </div></div>
                   <div className="call-notes-section">
-                    <label htmlFor="callNotes">הערת טלפן קצרה:</label>
-                    <textarea id="callNotes" rows={3} maxLength={500} value={callNotes} onChange={(e) => setCallNotes(e.target.value)} placeholder="לדוגמה: ביקש לחזור בערב, תומך אך רוצה תזכורת..." />
+                    <label htmlFor="callNotes">הערת טלפן קצרה <span>(אופציונלי)</span>:</label>
+                    <textarea id="callNotes" rows={3} maxLength={500} value={callNotes} onChange={(e) => setCallNotes(e.target.value)} placeholder="אפשר להשאיר ריק. לדוגמה: ביקש לחזור בערב, תומך אך רוצה תזכורת..." />
                     <span>{callNotes.length}/500</span>
                   </div>
                   {statusSelection === "SUCCESS" && <><div className="whatsapp-preview"><span>תצוגה מקדימה:</span><p>{buildWhatsAppText()}</p></div><a href={getWhatsAppLink()} target="_blank" rel="noopener noreferrer" className="btn-whatsapp">שלח הודעת וואטסאפ</a></>}

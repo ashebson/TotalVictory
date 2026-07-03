@@ -1323,3 +1323,55 @@
     display: grid;
   }
 }
+
+
+.admin-requests-panel {
+  border: 1px solid rgba(59, 130, 246, 0.22);
+  background: rgba(59, 130, 246, 0.045);
+  border-radius: 16px;
+  padding: 18px;
+}
+
+.admin-request-list {
+  display: grid;
+  gap: 12px;
+}
+
+.admin-request-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.admin-request-row > div {
+  display: grid;
+  gap: 4px;
+}
+
+.admin-request-row span,
+.admin-request-row small {
+  color: var(--text-secondary);
+}
+
+.admin-request-row button {
+  color: #fff;
+  background: rgba(16, 185, 129, 0.86);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-weight: 800;
+}
+
+.compact-empty {
+  padding: 18px;
+}
+
+@media (max-width: 760px) {
+  .admin-request-row {
+    grid-template-columns: 1fr;
+  }
+}

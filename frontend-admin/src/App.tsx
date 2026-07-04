@@ -77,7 +77,8 @@ function AdminApp() {
     fetchSettings();
     if (isOwner) fetchAdminRequests();
     const interval = window.setInterval(fetchData, 10000);
-    return () => window.clearInterval(interval);
+    const adminInterval = window.setInterval(() => { if (isOwner) fetchAdminRequests(); }, 10000);
+    return () => { window.clearInterval(interval); window.clearInterval(adminInterval); };
   }, [isAuthenticated]);
 
   const fetchData = async () => {

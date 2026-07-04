@@ -187,6 +187,18 @@ async function runBackendIntegrationChecks() {
       const ownerList = await request(server.baseUrl, "GET", "/api/admins/registration-requests", { headers: adminHeaders });
       assert.equal(ownerList.status, 200);
       assert.ok(ownerList.data.some((item) => item.email === pendingEmail));
+      const pendingAdmin = ownerList.data.find((item) => item.email === pendingEmail);
+      assert.equal(pendingAdmin.status, "PENDING");
+      const approval = await request(server.baseUrl, "POST", "/api/admins/" + pendingAdmin.id + "/approve", { headers: adminHeaders });
+      assert.equal(approval.status, 200);
+      assert.ok(approval.data.passcode);
+      const afterApproval = await request(server.baseUrl, "GET", "/api/admins/registration-requests", { headers: adminHeaders });
+      assert.equal(afterApproval.status, 200);
+      const approvedAdmin = afterApproval.data.find((item) => item.email === pendingEmail);
+      assert.ok(approvedAdmin, "approved admin should remain in owner registration list");
+      assert.equal(approvedAdmin.status, "ACTIVE");
+      assert.ok(approvedAdmin.passcode);
+      assert.ok(approvedAdmin.approvedAt);
       const csv = await request(server.baseUrl, "GET", "/api/admins/registration-requests.csv?passcode=" + ADMIN_PASSCODE);
       assert.equal(csv.status, 200);
       assert.match(csv.raw, /owner-review-/);

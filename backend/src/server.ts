@@ -932,6 +932,25 @@ function ownerAdminRegistration(admin: any) {
   };
 }
 
+async function ownerAdminRegistrations() {
+  if (prisma) {
+    const admins = await prisma.admin.findMany({ orderBy: { createdAt: "desc" }, include: { subscriptions: true } });
+    return admins.map((admin: any) => {
+      const subscriptions = [...(admin.subscriptions || [])].sort((a, b) => Number(new Date(a.createdAt || 0)) - Number(new Date(b.createdAt || 0)));
+      return {
+        ...admin,
+        createdAt: admin.createdAt ? new Date(admin.createdAt).toISOString() : null,
+        approvedAt: admin.approvedAt ? new Date(admin.approvedAt).toISOString() : null,
+        subscriptions,
+        latestSubscription: subscriptions[subscriptions.length - 1] || null,
+      };
+    });
+  }
+  return memory.admins
+    .map((admin) => ownerAdminRegistration(admin))
+    .sort((a, b) => Number(new Date(b.createdAt || 0)) - Number(new Date(a.createdAt || 0)));
+}
+
 function planLabel(planId: string) {
   return planId === "annual" ? 'שנתי - 1,990 ש"ח' : 'חודשי - 199 ש"ח';
 }
@@ -1048,22 +1067,23 @@ app.post("/api/admins/register", async (req, res) => {
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
-app.get("/api/admins/registration-requests", authenticateOwner, (_req, res) => {
-  const requests = memory.admins
-    .map((admin) => ownerAdminRegistration(admin))
-    .sort((a, b) => Number(new Date(b.createdAt || 0)) - Number(new Date(a.createdAt || 0)));
-  res.json(requests);
+app.get("/api/admins/registration-requests", authenticateOwner, async (_req, res) => {
+  try {
+    res.json(await ownerAdminRegistrations());
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
-app.get("/api/admins/registration-requests.csv", authenticateOwner, (_req, res) => {
-  const headers = ["מספר בקשה", "שם מלא", "ארגון", "טלפון", "אימייל", "סטטוס", "מסלול", "תאריך הרשמה", "תאריך אישור", "קוד גישה"];
-  const rows = memory.admins.map((admin) => {
-    const subscription = [...memory.subscriptions].reverse().find((item) => item.adminId === admin.id);
-    return [admin.id, admin.fullName, admin.organization, admin.phone, admin.email, admin.status, planLabel(subscription?.planId || "monthly"), admin.createdAt, admin.approvedAt || "", admin.passcode || ""];
-  });
-  res.setHeader("Content-Type", "text/csv; charset=utf-8");
-  res.setHeader("Content-Disposition", "attachment; filename=admin-registration-requests.csv");
-  res.send("\ufeff" + [headers, ...rows].map((row) => row.map(csvEscape).join(",")).join("\n"));
+app.get("/api/admins/registration-requests.csv", authenticateOwner, async (_req, res) => {
+  try {
+    const headers = ["מספר בקשה", "שם מלא", "ארגון", "טלפון", "אימייל", "סטטוס", "מסלול", "תאריך הרשמה", "תאריך אישור", "קוד גישה"];
+    const rows = (await ownerAdminRegistrations()).map((admin) => {
+      const subscription = admin.latestSubscription || [...(admin.subscriptions || [])].reverse()[0];
+      return [admin.id, admin.fullName, admin.organization, admin.phone, admin.email, admin.status, planLabel(subscription?.planId || "monthly"), admin.createdAt, admin.approvedAt || "", admin.passcode || ""];
+    });
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=admin-registration-requests.csv");
+    res.send("\ufeff" + [headers, ...rows].map((row) => row.map(csvEscape).join(",")).join("\n"));
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
 app.post("/api/admins/:adminId/approve", authenticateOwner, async (req, res) => {

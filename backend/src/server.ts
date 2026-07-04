@@ -1092,6 +1092,7 @@ app.post("/api/admins/:adminId/approve", authenticateOwner, async (req, res) => 
     if (!admin) return res.status(404).json({ error: "Admin request not found" });
     admin.status = "ACTIVE";
     if (!admin.passcode) admin.passcode = generatePasscode();
+    admin.approvedAt = admin.approvedAt || new Date().toISOString();
     const subscription = [...memory.subscriptions].reverse().find((item) => item.adminId === admin.id);
     if (subscription) {
       subscription.status = "ACTIVE";

@@ -33,6 +33,7 @@ function AdminApp() {
   const [registerForm, setRegisterForm] = useState({ fullName: "", email: "", phone: "", organization: "", planId: "monthly" });
   const [registrationRequest, setRegistrationRequest] = useState<{ message: string } | null>(null);
   const [adminRequests, setAdminRequests] = useState<AdminRequest[]>([]);
+  const [adminRequestsError, setAdminRequestsError] = useState("");
   const [approvedAdmin, setApprovedAdmin] = useState<{ name: string; passcode: string; whatsappUrl?: string } | null>(null);
 
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
@@ -93,10 +94,15 @@ function AdminApp() {
 
   const fetchAdminRequests = async () => {
     if (!isOwner) return;
-    const res = await fetch(API_URL + "/api/admins/registration-requests", { headers: getAdminHeaders() });
-    if (!res.ok) return;
-    const data = await res.json();
-    setAdminRequests(Array.isArray(data) ? data : []);
+    try {
+      setAdminRequestsError("");
+      const res = await fetch(API_URL + "/api/admins/registration-requests", { headers: getAdminHeaders() });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error || "לא ניתן לטעון את רשימת הנרשמים כרגע.");
+      setAdminRequests(Array.isArray(data) ? data : []);
+    } catch (error) {
+      setAdminRequestsError(error instanceof Error ? error.message : "לא ניתן לטעון את רשימת הנרשמים כרגע.");
+    }
   };
 
   const fetchSettings = async () => {
@@ -426,7 +432,7 @@ function AdminApp() {
               <div className="settings-section"><h3>תבנית הודעת וואטסאפ</h3><textarea rows={4} value={settings.whatsapp_template} onChange={(e) => setSettings({ ...settings, whatsapp_template: e.target.value })} placeholder="שלום {name}..." /></div>
               <div className="settings-section"><label>יעד שיחות</label><input type="number" value={settings.target_calls} onChange={(e) => setSettings({ ...settings, target_calls: e.target.value })} /></div>
 
-              {isOwner && <div className="settings-section admin-requests-panel"><div className="settings-section-title"><h3>רישום מנהלים</h3><button type="button" onClick={fetchAdminRequests}>רענן</button></div><p>כאן נשמר יומן מלא של כל מי שנרשם: ממתינים, מאושרים, תאריך הרשמה, תאריך אישור וקוד הגישה.</p>{approvedAdmin && <div className="result-banner success"><strong>{approvedAdmin.name} אושר.</strong><div>קוד גישה: <b>{approvedAdmin.passcode}</b></div>{approvedAdmin.whatsappUrl && <a href={approvedAdmin.whatsappUrl} target="_blank" rel="noreferrer">פתח הודעת וואטסאפ מוכנה</a>}</div>}{adminRequests.length === 0 ? <div className="empty-state compact-empty">אין עדיין נרשמים במערכת.</div> : <div className="admin-request-list">{adminRequests.map((request) => { const subscription = request.subscriptions?.[request.subscriptions.length - 1]; const isApproved = request.status === "ACTIVE"; return <div className={"admin-request-row " + (isApproved ? "approved" : "pending")} key={request.id}><div><strong>{request.fullName}</strong><span>{request.organization} · {request.phone} · {request.email}</span><small>סטטוס: {isApproved ? "אושר" : "ממתין"} · מסלול: {subscription?.planId || "monthly"} · הרשמה: {request.createdAt ? new Date(request.createdAt).toLocaleString("he-IL") : "-"}</small><small>אישור: {request.approvedAt ? new Date(request.approvedAt).toLocaleString("he-IL") : "-"} · קוד גישה: {request.passcode || "-"}</small></div>{isApproved ? <span className="approved-badge">אושר</span> : <button type="button" onClick={() => approveAdminRequest(request)} disabled={loading}>אשר מנהל</button>}</div>; })}</div>}<div className="sheet-actions"><a href={API_URL + "/api/admins/registration-requests.csv?passcode=" + encodeURIComponent(sessionStorage.getItem("admin_passcode") || passcode)} target="_blank" rel="noreferrer">הורד רשימת נרשמים CSV</a></div></div>}
+              {isOwner && <div className="settings-section admin-requests-panel"><div className="settings-section-title"><h3>רישום מנהלים</h3><button type="button" onClick={fetchAdminRequests}>רענן</button></div><p>כאן נשמר יומן מלא של כל מי שנרשם: ממתינים, מאושרים, תאריך הרשמה, תאריך אישור וקוד הגישה.</p>{approvedAdmin && <div className="result-banner success"><strong>{approvedAdmin.name} אושר.</strong><div>קוד גישה: <b>{approvedAdmin.passcode}</b></div>{approvedAdmin.whatsappUrl && <a href={approvedAdmin.whatsappUrl} target="_blank" rel="noreferrer">פתח הודעת וואטסאפ מוכנה</a>}</div>}{adminRequestsError && <div className="error-banner">{adminRequestsError}</div>}{adminRequests.length === 0 ? <div className="empty-state compact-empty">אין עדיין נרשמים במערכת.</div> : <div className="admin-request-list">{adminRequests.map((request) => { const subscription = request.subscriptions?.[request.subscriptions.length - 1]; const isApproved = request.status === "ACTIVE"; return <div className={"admin-request-row " + (isApproved ? "approved" : "pending")} key={request.id}><div><strong>{request.fullName}</strong><span>{request.organization} · {request.phone} · {request.email}</span><small>סטטוס: {isApproved ? "אושר" : "ממתין"} · מסלול: {subscription?.planId || "monthly"} · הרשמה: {request.createdAt ? new Date(request.createdAt).toLocaleString("he-IL") : "-"}</small><small>אישור: {request.approvedAt ? new Date(request.approvedAt).toLocaleString("he-IL") : "-"} · קוד גישה: {request.passcode || "-"}</small></div>{isApproved ? <span className="approved-badge">אושר</span> : <button type="button" onClick={() => approveAdminRequest(request)} disabled={loading}>אשר מנהל</button>}</div>; })}</div>}<div className="sheet-actions"><a href={API_URL + "/api/admins/registration-requests.csv?passcode=" + encodeURIComponent(sessionStorage.getItem("admin_passcode") || passcode)} target="_blank" rel="noreferrer">הורד רשימת נרשמים CSV</a></div></div>}
               <div className="settings-section call-status-settings">
                 <div className="settings-section-title"><h3>אפשרויות סימון לאחר שיחה</h3><button type="button" onClick={resetCallStatusOptions}>איפוס לברירת מחדל</button></div>
                 <p>אפשר לשנות את שם הכפתורים ולהסתיר אפשרות שאינה בשימוש. המשמעות המערכתית נשארת קבועה כדי שהדוחות והסבבים החוזרים יישארו מסודרים.</p>

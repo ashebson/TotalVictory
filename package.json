@@ -1,0 +1,10 @@
+{
+  "name": "total-victory-system",
+  "private": true,
+  "scripts": {
+    "test": "node tests/run-system-tests.js",
+    "test:backend": "node tests/run-system-tests.js --backend-only",
+    "test:builds": "node tests/run-system-tests.js --builds-only",
+    "test:admin-registration": "node tests/admin-registration-smoke.js"
+  }
+}

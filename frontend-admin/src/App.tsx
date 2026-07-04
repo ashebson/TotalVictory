@@ -1,13 +1,12 @@
 import React, { useEffect, useState } from "react";
 import "./App.css";
+import CallerApp from "./CallerApp";
 
 // Vercel build trigger - 2026-07-02 17:41
 const PUBLIC_API_URL = "https://total-victory.onrender.com";
 const LOCAL_API_URL = window.location.protocol + "//" + window.location.hostname + ":5001";
 const API_URL = (import.meta.env.VITE_API_URL || (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" ? LOCAL_API_URL : PUBLIC_API_URL)).replace(/\/$/, "");
-const LOCAL_CALLER_URL = window.location.protocol + "//" + window.location.hostname + ":5173";
-const PUBLIC_CALLER_URL = "https://totalvictory-caller.vercel.app";
-const CALLER_URL = (import.meta.env.VITE_CALLER_URL || (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" ? LOCAL_CALLER_URL : PUBLIC_CALLER_URL)).replace(/\/$/, "");
+const CALLER_URL = window.location.origin.replace(/\/$/, "");
 
 type Tab = "dashboard" | "projects" | "settings";
 type Summary = { total: number; pending: number; success: number; notInterested: number; noAnswer: number; invalidNumber: number; totalCalled: number };
@@ -26,7 +25,7 @@ const defaultCallStatusOptions: CallStatusOption[] = [
 
 const emptySummary: Summary = { total: 0, pending: 0, success: 0, notInterested: 0, noAnswer: 0, invalidNumber: 0, totalCalled: 0 };
 
-export default function App() {
+function AdminApp() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [passcode, setPasscode] = useState(() => sessionStorage.getItem("admin_passcode") || "");
   const [passcodeError, setPasscodeError] = useState(false);
@@ -232,7 +231,7 @@ export default function App() {
 
   const csvExportUrl = (project: Project) => API_URL + "/api/projects/" + project.id + "/export.csv?passcode=" + encodeURIComponent(sessionStorage.getItem("admin_passcode") || passcode);
   const xlsxExportUrl = (project: Project) => API_URL + "/api/projects/" + project.id + "/export.xlsx?passcode=" + encodeURIComponent(sessionStorage.getItem("admin_passcode") || passcode);
-  const callerJoinUrl = (project: Project) => CALLER_URL + "?projectId=" + project.id;
+  const callerJoinUrl = (project: Project) => CALLER_URL + "?caller=1&projectId=" + project.id;
 
   const approveAdminRequest = async (request: AdminRequest) => {
     const approved = window.confirm("לאשר את " + request.fullName + " כמנהל פעיל וליצור לו קוד גישה?");
@@ -442,4 +441,10 @@ export default function App() {
       </main>
     </div>
   );
+}
+
+export default function App() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("caller") === "1") return <CallerApp />;
+  return <AdminApp />;
 }

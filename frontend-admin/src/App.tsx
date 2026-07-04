@@ -5,7 +5,9 @@ import "./App.css";
 const PUBLIC_API_URL = "https://total-victory.onrender.com";
 const LOCAL_API_URL = window.location.protocol + "//" + window.location.hostname + ":5001";
 const API_URL = (import.meta.env.VITE_API_URL || (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" ? LOCAL_API_URL : PUBLIC_API_URL)).replace(/\/$/, "");
-const CALLER_URL = (import.meta.env.VITE_CALLER_URL || window.location.origin).replace(/\/$/, "");
+const LOCAL_CALLER_URL = window.location.protocol + "//" + window.location.hostname + ":5173";
+const PUBLIC_CALLER_URL = "https://totalvictory-caller.vercel.app";
+const CALLER_URL = (import.meta.env.VITE_CALLER_URL || (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" ? LOCAL_CALLER_URL : PUBLIC_CALLER_URL)).replace(/\/$/, "");
 
 type Tab = "dashboard" | "projects" | "settings";
 type Summary = { total: number; pending: number; success: number; notInterested: number; noAnswer: number; invalidNumber: number; totalCalled: number };
@@ -407,7 +409,7 @@ export default function App() {
                 <section className="project-card" key={project.id}>
                   <div className="project-card-header"><div><h2>{project.name}</h2><span>{project.sourceFileName || "קובץ מקומי"}</span></div><div className="project-card-actions"><strong>{project.stats.total} רשומות</strong><button type="button" onClick={() => deleteProject(project)}>העבר לארכיון</button></div></div>
                   <div className="project-stats-row"><span>ממתינים: {project.stats.pending}</span><span>בוצעו: {project.stats.totalCalled}</span><span>הצלחות: {project.stats.success}</span></div>
-                  <div className="sheet-link-box"><div className="sheet-actions"><a href={csvExportUrl(project)} target="_blank" rel="noreferrer">פתח CSV מתעדכן</a><a href={xlsxExportUrl(project)} target="_blank" rel="noreferrer">הורד XLSX מתעדכן</a><button type="button" onClick={() => navigator.clipboard.writeText(callerJoinUrl(project))}>העתק קישור הצטרפות</button></div><small>{callerJoinUrl(project)}</small></div>
+                  <div className="sheet-link-box"><div className="sheet-actions"><a href={csvExportUrl(project)} target="_blank" rel="noreferrer">פתח CSV מתעדכן</a><a href={xlsxExportUrl(project)} target="_blank" rel="noreferrer">הורד XLSX מתעדכן</a><button type="button" onClick={() => navigator.clipboard.writeText(callerJoinUrl(project))}>העתק קישור הצטרפות לטלפנים</button></div><small>{callerJoinUrl(project)}</small></div>
                   <div className="assign-box"><label>שיוך טלפן לפרויקט לפי מספר טלפון בלבד</label><div className="assign-row assign-row-wide"><input value={callerPhoneInputs[project.id] || ""} onChange={(e) => setCallerPhoneInputs((prev) => ({ ...prev, [project.id]: e.target.value }))} placeholder="מספר טלפון של הטלפן" /><button type="button" onClick={() => assignCaller(project.id)} disabled={loading || !callerPhoneInputs[project.id]?.trim()}>שייך</button></div></div>
                   <div className="caller-chip-list">{project.callers.length === 0 ? <span className="muted-text">אין טלפנים משויכים</span> : project.callers.map((caller) => <button key={caller.id} type="button" className="caller-chip" onClick={() => unassignCaller(project.id, caller.id)} title="הסר שיוך">{caller.name || "טרם הזדהה"} · {caller.phone} ×</button>)}</div>
                 </section>

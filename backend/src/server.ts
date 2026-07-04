@@ -972,11 +972,18 @@ io.on("connection", (socket) => { console.log("Client connected:", socket.id); s
 app.post("/api/login", async (req, res) => {
   try {
     const { name, phone } = req.body;
+    const joinProjectId = Number(req.body.projectId || 0);
     const normalizedPhone = cleanPhone(phone);
     if (!name || !String(name).trim()) return res.status(400).json({ error: "Name is required" });
     if (normalizedPhone.length < 9) return res.status(400).json({ error: "Valid phone is required" });
     const caller = ensureCaller(String(name), normalizedPhone);
     await persistCaller(caller);
+    if (joinProjectId) {
+      const project = memory.projects.find((item) => item.id === joinProjectId);
+      if (!project || isProjectArchived(joinProjectId)) return res.status(404).json({ error: "Project not found" });
+      linkCallerToProject(caller.id, joinProjectId);
+      await persistCallerProject(caller.id, joinProjectId);
+    }
     broadcastStatsUpdate();
     res.json({ ...caller, projects: getCallerProjects(caller.id) });
   } catch (error: any) { res.status(500).json({ error: error.message }); }

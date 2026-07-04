@@ -42,6 +42,7 @@ const defaultCallStatusOptions: CallStatusOption[] = [
 ];
 
 export default function App() {
+  const inviteProjectId = Number(new URLSearchParams(window.location.search).get("projectId") || 0);
   const [caller, setCaller] = useState<Caller | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
@@ -168,7 +169,7 @@ export default function App() {
       const res = await fetch(API_URL + "/api/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, phone }),
+        body: JSON.stringify({ name, phone, projectId: inviteProjectId || undefined }),
       });
       if (!res.ok) throw new Error("restore failed");
       const data = await res.json();
@@ -198,7 +199,7 @@ export default function App() {
       const res = await fetch(API_URL + "/api/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: callerNameInput.trim(), phone: callerPhoneInput.trim() }),
+        body: JSON.stringify({ name: callerNameInput.trim(), phone: callerPhoneInput.trim(), projectId: inviteProjectId || undefined }),
       });
       if (!res.ok) throw new Error("login failed");
       const data = await res.json();

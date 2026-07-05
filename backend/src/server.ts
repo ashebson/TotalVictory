@@ -1529,6 +1529,44 @@ app.post("/api/admins/:adminId/approve", authenticateOwner, async (req, res) => 
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
+app.post("/api/admins/:adminId/update-expiry", authenticateOwner, async (req, res) => {
+  try {
+    const adminId = Number(req.params.adminId);
+    const { expiresAt } = req.body;
+    if (!expiresAt) {
+      return res.status(400).json({ error: "Missing expiresAt date" });
+    }
+    const expiresAtStr = new Date(expiresAt).toISOString();
+    
+    // Find admin
+    const admin = memory.admins.find((item) => item.id === adminId);
+    if (!admin) return res.status(404).json({ error: "Admin request not found" });
+
+    let sub = memory.subscriptions.find((item) => item.adminId === adminId && item.status === "ACTIVE");
+    if (sub) {
+      sub.expiresAt = expiresAtStr;
+    } else {
+      sub = {
+        id: memory.ids.subscription++,
+        adminId,
+        planId: "monthly",
+        status: "ACTIVE",
+        provider: "bank_transfer",
+        amount: 990,
+        currency: "ILS",
+        createdAt: new Date().toISOString(),
+        expiresAt: expiresAtStr
+      };
+      memory.subscriptions.push(sub);
+    }
+
+    await persistSubscriptionRecord(sub);
+    res.json({ success: true, expiresAt: expiresAtStr });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get("/api/callers", authenticateAdmin, async (req, res) => {
   try {
     const adminId = (req as any).adminId;
@@ -2010,6 +2048,97 @@ app.post("/api/callers/reset", authenticateOwner, async (_req, res) => {
   res.status(403).json({ error: "Reset is disabled to protect caller work and uploaded Excel data" });
 });
 
+export async function cleanupExpiredData() {
+  try {
+    const oneYearAgo = new Date();
+    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+    const expiredAdminIds: number[] = [];
+
+    if (prisma) {
+      const subscriptions = await prisma.subscription.findMany({
+        where: {
+          status: "ACTIVE",
+          expiresAt: {
+            lt: oneYearAgo
+          }
+        }
+      });
+      for (const sub of subscriptions) {
+        expiredAdminIds.push(sub.adminId);
+      }
+    } else {
+      for (const sub of memory.subscriptions) {
+        if (sub.status === "ACTIVE" && sub.expiresAt) {
+          const expiryDate = new Date(sub.expiresAt);
+          if (expiryDate < oneYearAgo) {
+            expiredAdminIds.push(sub.adminId);
+          }
+        }
+      }
+    }
+
+    if (expiredAdminIds.length === 0) return;
+    console.log(`[Cleanup] Found ${expiredAdminIds.length} admins expired for more than 1 year. Cleaning up data...`);
+
+    for (const adminId of expiredAdminIds) {
+      if (prisma) {
+        const projectIds = (await prisma.project.findMany({
+          where: { adminId },
+          select: { id: true }
+        })).map((p) => p.id);
+
+        if (projectIds.length > 0) {
+          await prisma.callLog.deleteMany({
+            where: {
+              projectId: { in: projectIds }
+            }
+          });
+          await prisma.callerProject.deleteMany({
+            where: {
+              projectId: { in: projectIds }
+            }
+          });
+          await prisma.contact.deleteMany({
+            where: {
+              projectId: { in: projectIds }
+            }
+          });
+          await prisma.project.deleteMany({
+            where: { adminId }
+          });
+        }
+        await prisma.caller.deleteMany({
+          where: { adminId }
+        });
+        await prisma.subscription.deleteMany({
+          where: { adminId }
+        });
+        await prisma.admin.delete({
+          where: { id: adminId }
+        });
+      }
+
+      // Cleanup memory lists
+      const adminProjects = memory.projects.filter((p) => p.adminId === adminId);
+      const adminProjIds = adminProjects.map((p) => p.id);
+
+      memory.callLogs = memory.callLogs.filter((c) => !adminProjIds.includes(c.projectId));
+      memory.callerProjects = memory.callerProjects.filter((l) => !adminProjIds.includes(l.projectId));
+      memory.contacts = memory.contacts.filter((c) => !adminProjIds.includes(c.projectId));
+      memory.callers = memory.callers.filter((c) => c.adminId !== adminId);
+      memory.projects = memory.projects.filter((p) => p.adminId !== adminId);
+      memory.subscriptions = memory.subscriptions.filter((s) => s.adminId !== adminId);
+      memory.admins = memory.admins.filter((a) => a.id !== adminId);
+    }
+    
+    if (process.env.USE_MEMORY_DB === "true") {
+      await saveMemoryStore();
+    }
+  } catch (error) {
+    console.error("[Cleanup] Error during daily expired data cleanup:", error);
+  }
+}
+
 const PORT = process.env.PORT || 5001;
 
 export async function startServer(port: string | number = PORT) {
@@ -2028,6 +2157,11 @@ export async function startServer(port: string | number = PORT) {
         }
         await initSettings();
         startSettingsCacheSync();
+        
+        // Run daily cleanup for expired subscriptions
+        cleanupExpiredData();
+        setInterval(cleanupExpiredData, 24 * 60 * 60 * 1000);
+
         if (process.env.USE_MEMORY_DB === "true") await saveMemoryStore();
         server.off("error", onError);
         console.log("Server running on port " + port);

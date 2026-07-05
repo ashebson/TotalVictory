@@ -467,7 +467,43 @@ async function runBackendIntegrationChecks() {
       const exportXlsx = await request(server.baseUrl, "GET", "/api/projects/" + projId + "/export.xlsx?passcode=" + passC);
       assert.equal(exportXlsx.status, 200);
       
-      return "licensing expiry verification passed successfully";
+      // Test update-expiry route
+      const futureDate = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString();
+      const updateExpiry = await request(server.baseUrl, "POST", "/api/admins/" + pendingC.id + "/update-expiry", {
+        headers: adminHeaders,
+        body: { expiresAt: futureDate }
+      });
+      assert.equal(updateExpiry.status, 200);
+      assert.equal(new Date(updateExpiry.data.expiresAt).toISOString(), new Date(futureDate).toISOString());
+      
+      // Verify that the admin is active again
+      const validateActive = await request(server.baseUrl, "POST", "/api/admins/validate", { body: { passcode: passC } });
+      assert.equal(validateActive.status, 200);
+      assert.equal(validateActive.data.isExpired, false);
+      
+      // Set the expiration date to 13 months ago (over 1 year)
+      const overOneYearAgo = new Date();
+      overOneYearAgo.setMonth(overOneYearAgo.getMonth() - 13);
+      const setOldExpiry = await request(server.baseUrl, "POST", "/api/admins/" + pendingC.id + "/update-expiry", {
+        headers: adminHeaders,
+        body: { expiresAt: overOneYearAgo.toISOString() }
+      });
+      assert.equal(setOldExpiry.status, 200);
+      
+      // Trigger the backend cleanupExpiredData manually
+      const backendModulePath = path.join(ROOT, "backend", "dist", "server.js");
+      const backend = require(backendModulePath);
+      await backend.cleanupExpiredData();
+      
+      // Verify that admin C is deleted
+      const validateDeleted = await request(server.baseUrl, "POST", "/api/admins/validate", { body: { passcode: passC } });
+      assert.equal(validateDeleted.status, 401);
+      
+      const ownerListAfterCleanup = await request(server.baseUrl, "GET", "/api/admins/registration-requests", { headers: adminHeaders });
+      const foundC = ownerListAfterCleanup.data.find((item) => item.id === pendingC.id);
+      assert.ok(!foundC, "Admin expired for more than 1 year should be cleaned up from database");
+      
+      return "licensing expiry, update-expiry, and 1-year data deletion cleanup verified successfully";
     });
     await step("Dangerous reset endpoints are disabled", async () => {
       const contactsReset = await request(server.baseUrl, "POST", "/api/contacts/reset", { headers: adminHeaders });

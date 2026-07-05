@@ -279,6 +279,26 @@ function AdminApp() {
     }
   };
 
+  const updateAdminExpiry = async (adminId: number, expiresAt: string) => {
+    if (!expiresAt) return;
+    setLoading(true);
+    try {
+      const res = await fetch(API_URL + "/api/admins/" + adminId + "/update-expiry", {
+        method: "POST",
+        headers: getAdminHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ expiresAt })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "update failed");
+      alert("תאריך התפוגה עודכן בהצלחה.");
+      fetchAdminRequests();
+    } catch (err: any) {
+      alert("שגיאה בעדכון תאריך התפוגה: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -413,6 +433,7 @@ function AdminApp() {
               <span className="expired-icon" style={{ fontSize: "48px", display: "block", marginBottom: "15px" }}>⚠️</span>
               <h2 style={{ fontSize: "24px", color: "#ff4d4f", marginBottom: "15px" }}>תוקף הרישיון פג</h2>
               <p style={{ color: "#e3e3e3", marginBottom: "10px", lineHeight: "1.6" }}>תוקף הרישיון עבור מטה זה פג. כל הנתונים, המתפקדים והערות הטלפנים שמורים ומאובטחים לחלוטין במערכת.</p>
+              <p style={{ color: "#ff4d4f", fontSize: "14px", fontWeight: "bold", marginBottom: "15px", lineHeight: "1.6" }}>⚠️ שים לב: שנה לאחר פקיעת תוקף הרישיון, כל הקבצים, הפרויקטים והנתונים המקושרים למטה זה יימחקו לצמיתות מהשרת ללא אפשרות שחזור.</p>
               <p className="sub" style={{ color: "#a0a0a0", fontSize: "14px", marginBottom: "25px", lineHeight: "1.6" }}>לנוחיותך, תוכל להוריד כעת את קבצי ה-Excel (XLSX) וה-CSV המעודכנים המכילים את כל תוצאות השיחות, הערות הטלפנים והסטטוסים האחרונים:</p>
               
               <div className="expired-projects-list" style={{ display: "flex", flexDirection: "column", gap: "12px", marginBottom: "25px" }}>
@@ -527,32 +548,125 @@ function AdminApp() {
               <div className="settings-section"><h3>תבנית הודעת וואטסאפ</h3><textarea rows={4} value={settings.whatsapp_template} onChange={(e) => setSettings({ ...settings, whatsapp_template: e.target.value })} placeholder="שלום {name}..." /></div>
               <div className="settings-section"><label>יעד שיחות</label><input type="number" value={settings.target_calls} onChange={(e) => setSettings({ ...settings, target_calls: e.target.value })} /></div>
 
-              {isOwner && <div className="settings-section admin-requests-panel"><div className="settings-section-title"><h3>רישום מנהלים</h3><button type="button" onClick={fetchAdminRequests}>רענן</button></div><p>כאן נשמר יומן מלא של כל מי שנרשם: ממתינים, מאושרים, תאריך הרשמה, תאריך אישור וקוד הגישה.</p>{approvedAdmin && <div className="result-banner success"><strong>{approvedAdmin.name} אושר.</strong><div>קוד גישה: <b>{approvedAdmin.passcode}</b></div>{approvedAdmin.whatsappUrl && <a href={approvedAdmin.whatsappUrl} target="_blank" rel="noreferrer">פתח הודעת וואטסאפ מוכנה</a>}</div>}{adminRequestsError && <div className="error-banner">{adminRequestsError}</div>}{adminRequests.length === 0 ? <div className="empty-state compact-empty">אין עדיין נרשמים במערכת.</div> : <div className="admin-request-list">{adminRequests.map((request) => { 
-  const subscription = request.subscriptions?.[request.subscriptions.length - 1]; 
-  const isApproved = request.status === "ACTIVE"; 
-  const regDate = request.createdAt ? new Date(request.createdAt) : new Date();
-  const defaultExpiry = new Date(regDate.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-  return <div className={"admin-request-row " + (isApproved ? "approved" : "pending")} key={request.id}>
-    <div>
-      <strong>{request.fullName}</strong>
-      <span>{request.organization} · {request.phone} · {request.email}</span>
-      <small>סטטוס: {isApproved ? "אושר" : "ממתין"} · מסלול: חודשי - 990 ₪ · הרשמה: {request.createdAt ? new Date(request.createdAt).toLocaleString("he-IL") : "-"}</small>
-      <small>אישור: {request.approvedAt ? new Date(request.approvedAt).toLocaleString("he-IL") : "-"} {isApproved && ` · תפוגה: ${subscription?.expiresAt ? new Date(subscription.expiresAt).toLocaleDateString("he-IL") : "חודש מהאישור"}`} · קוד גישה: {request.passcode || "-"}</small>
-    </div>
-    {isApproved ? <span className="approved-badge">אושר</span> : (
-      <div style={{ display: "flex", flexDirection: "column", gap: "8px", alignItems: "flex-end" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          <label style={{ fontSize: "12px", color: "#a0a0a0" }}>תאריך תפוגה:</label>
-          <input type="date" id={`expiry-${request.id}`} defaultValue={defaultExpiry} style={{ background: "#252535", color: "white", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", padding: "4px 8px", fontSize: "12px" }} />
-        </div>
-        <button type="button" onClick={() => {
-          const input = document.getElementById(`expiry-${request.id}`) as HTMLInputElement | null;
-          approveAdminRequest(request, input?.value);
-        }} disabled={loading}>אשר מנהל</button>
-      </div>
-    )}
-  </div>; 
-})}</div>}<div className="sheet-actions"><a href={API_URL + "/api/admins/registration-requests.csv?passcode=" + encodeURIComponent(sessionStorage.getItem("admin_passcode") || passcode)} target="_blank" rel="noreferrer">הורד רשימת נרשמים CSV</a></div></div>}
+              {isOwner && (
+                <div className="settings-section admin-requests-panel">
+                  <div className="settings-section-title">
+                    <h3>ניהול מנהלים ורישיונות (TVictory Owner)</h3>
+                    <button type="button" onClick={fetchAdminRequests}>רענן רשימה</button>
+                  </div>
+                  
+                  {approvedAdmin && (
+                    <div className="result-banner success">
+                      <strong>{approvedAdmin.name} אושר בהצלחה.</strong>
+                      <div>קוד גישה למערכת: <b>{approvedAdmin.passcode}</b></div>
+                      {approvedAdmin.whatsappUrl && (
+                        <a href={approvedAdmin.whatsappUrl} target="_blank" rel="noreferrer">
+                          שלח הודעת וואטסאפ עם קוד הגישה
+                        </a>
+                      )}
+                    </div>
+                  )}
+                  
+                  {adminRequestsError && <div className="error-banner">{adminRequestsError}</div>}
+                  
+                  <div className="owner-management-tabs" style={{ marginTop: "15px" }}>
+                    {/* 1. Pending Section */}
+                    <div className="owner-section-card" style={{ marginBottom: "25px", background: "rgba(255,255,255,0.02)", padding: "18px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.05)" }}>
+                      <h4 style={{ color: "#ffc107", marginBottom: "12px", display: "flex", alignItems: "center", gap: "8px", margin: "0 0 12px 0" }}>
+                        <span>⏳</span> בקשות הרשמה ממתינות לאישור ({adminRequests.filter(r => r.status !== "ACTIVE").length})
+                      </h4>
+                      {adminRequests.filter(r => r.status !== "ACTIVE").length === 0 ? (
+                        <div className="empty-state compact-empty" style={{ padding: "15px", textAlign: "center", color: "#a0a0a0" }}>אין בקשות ממתינות לאישור.</div>
+                      ) : (
+                        <div className="admin-request-list" style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                          {adminRequests.filter(r => r.status !== "ACTIVE").map((request) => {
+                            const regDate = request.createdAt ? new Date(request.createdAt) : new Date();
+                            const defaultExpiry = new Date(regDate.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+                            return (
+                              <div className="admin-request-row pending" key={request.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(0,0,0,0.2)", padding: "12px 16px", borderRadius: "6px", borderRight: "4px solid #ffc107" }}>
+                                <div style={{ textAlign: "right" }}>
+                                  <strong style={{ color: "white", display: "block" }}>{request.fullName}</strong>
+                                  <span style={{ fontSize: "13px", color: "#e3e3e3" }}>{request.organization} · {request.phone} · {request.email}</span>
+                                  <small style={{ display: "block", color: "#a0a0a0", marginTop: "4px" }}>
+                                    הרשמה: {request.createdAt ? new Date(request.createdAt).toLocaleString("he-IL") : "-"}
+                                  </small>
+                                </div>
+                                <div style={{ display: "flex", flexDirection: "column", gap: "8px", alignItems: "flex-end" }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                    <label style={{ fontSize: "12px", color: "#a0a0a0" }}>תפוגת רישיון:</label>
+                                    <input type="date" id={`expiry-${request.id}`} defaultValue={defaultExpiry} style={{ background: "#252535", color: "white", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", padding: "4px 8px", fontSize: "12px" }} />
+                                  </div>
+                                  <button type="button" onClick={() => {
+                                    const input = document.getElementById(`expiry-${request.id}`) as HTMLInputElement | null;
+                                    approveAdminRequest(request, input?.value);
+                                  }} disabled={loading}>אשר והנפק קוד</button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                    
+                    {/* 2. Active Section */}
+                    <div className="owner-section-card" style={{ background: "rgba(255,255,255,0.02)", padding: "18px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.05)" }}>
+                      <h4 style={{ color: "#28a745", marginBottom: "12px", display: "flex", alignItems: "center", gap: "8px", margin: "0 0 12px 0" }}>
+                        <span>✅</span> מנהלים פעילים במערכת ({adminRequests.filter(r => r.status === "ACTIVE").length})
+                      </h4>
+                      {adminRequests.filter(r => r.status === "ACTIVE").length === 0 ? (
+                        <div className="empty-state compact-empty" style={{ padding: "15px", textAlign: "center", color: "#a0a0a0" }}>אין מנהלים פעילים במערכת.</div>
+                      ) : (
+                        <div className="admin-request-list" style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                          {adminRequests.filter(r => r.status === "ACTIVE").map((request) => {
+                            const subscription = request.subscriptions?.[request.subscriptions.length - 1];
+                            const isExpired = subscription?.expiresAt ? new Date(subscription.expiresAt).getTime() < Date.now() : false;
+                            const currentExpiry = subscription?.expiresAt ? new Date(subscription.expiresAt).toISOString().split('T')[0] : "";
+                            
+                            return (
+                              <div className={"admin-request-row approved " + (isExpired ? "expired-row" : "")} key={request.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(0,0,0,0.2)", padding: "12px 16px", borderRadius: "6px", borderRight: isExpired ? "4px solid #ff4d4f" : "4px solid #28a745" }}>
+                                <div style={{ textAlign: "right" }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                    <strong style={{ color: "white" }}>{request.fullName}</strong>
+                                    {isExpired ? (
+                                      <span style={{ fontSize: "10px", backgroundColor: "#ff4d4f", color: "white", padding: "1px 6px", borderRadius: "4px" }}>רישיון פג</span>
+                                    ) : (
+                                      <span style={{ fontSize: "10px", backgroundColor: "#28a745", color: "white", padding: "1px 6px", borderRadius: "4px" }}>פעיל</span>
+                                    )}
+                                  </div>
+                                  <span style={{ fontSize: "13px", color: "#e3e3e3", display: "block", marginTop: "2px" }}>
+                                    {request.organization} · {request.phone} · {request.email}
+                                  </span>
+                                  <small style={{ display: "block", color: "#a0a0a0", marginTop: "4px" }}>
+                                    קוד גישה: <b style={{ color: "#ffc107", cursor: "pointer" }} onClick={() => { navigator.clipboard.writeText(request.passcode || ""); alert("קוד הגישה הועתק!"); }} title="לחץ להעתקה">{request.passcode || "-"} (לחץ להעתקה)</b> · אישור: {request.approvedAt ? new Date(request.approvedAt).toLocaleDateString("he-IL") : "-"}
+                                  </small>
+                                </div>
+                                <div style={{ display: "flex", flexDirection: "column", gap: "8px", alignItems: "flex-end" }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                    <label style={{ fontSize: "12px", color: "#a0a0a0" }}>תאריך תפוגה:</label>
+                                    <input type="date" id={`expiry-edit-${request.id}`} defaultValue={currentExpiry} style={{ background: "#252535", color: "white", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", padding: "4px 8px", fontSize: "12px" }} />
+                                  </div>
+                                  <button type="button" className="btn-secondary" style={{ padding: "6px 12px", fontSize: "12px", backgroundColor: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "white" }} onClick={() => {
+                                    const input = document.getElementById(`expiry-edit-${request.id}`) as HTMLInputElement | null;
+                                    if (input?.value) {
+                                      updateAdminExpiry(request.id, input.value);
+                                    }
+                                  }} disabled={loading}>עדכן תפוגה</button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  
+                  <div className="sheet-actions" style={{ marginTop: "15px" }}>
+                    <a href={API_URL + "/api/admins/registration-requests.csv?passcode=" + encodeURIComponent(sessionStorage.getItem("admin_passcode") || passcode)} target="_blank" rel="noreferrer">
+                      הורד רשימת נרשמים CSV
+                    </a>
+                  </div>
+                </div>
+              )}
               <div className="settings-section call-status-settings">
                 <div className="settings-section-title"><h3>אפשרויות סימון לאחר שיחה</h3><button type="button" onClick={resetCallStatusOptions}>איפוס לברירת מחדל</button></div>
                 <p>אפשר לשנות את שם הכפתורים ולהסתיר אפשרות שאינה בשימוש. המשמעות המערכתית נשארת קבועה כדי שהדוחות והסבבים החוזרים יישארו מסודרים.</p>

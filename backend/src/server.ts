@@ -256,7 +256,7 @@ async function sendRegistrationNotification(admin: any, planId: string) {
 מסלול: ${planLabel(planId)}
 מספר בקשה: ${admin.id}`;
 
-  const messageText = `הרשמת מנהל חדש במערכת Total Victory:
+  const messageText = `הרשמת מנהל חדש במערכת TVictory:
 ${adminDetails}`;
 
   const webhookUrl = process.env.NOTIFICATION_WEBHOOK_URL;
@@ -298,10 +298,10 @@ ${adminDetails}`;
       await transporter.sendMail({
         from: smtpFrom,
         to: notifyEmail,
-        subject: `Total Victory - הרשמת מנהל חדש: ${admin.fullName}`,
+        subject: `TVictory - הרשמת מנהל חדש: ${admin.fullName}`,
         text: messageText,
         html: `<div dir="rtl" style="font-family: sans-serif;">
-          <h2>הרשמת מנהל חדש במערכת Total Victory</h2>
+          <h2>הרשמת מנהל חדש במערכת TVictory</h2>
           <p><strong>פרטי הנרשם:</strong></p>
           <ul>
             <li><strong>שם מלא:</strong> ${admin.fullName}</li>
@@ -332,6 +332,16 @@ function authenticateOwner(req: express.Request, res: express.Response, next: ex
   next();
 }
 
+function isExpiredAdmin(adminId: number): boolean {
+  if (adminId === 1) return false;
+  const sub = [...memory.subscriptions]
+    .reverse()
+    .find((s) => s.adminId === adminId && s.status === "ACTIVE");
+  if (!sub) return true;
+  if (!sub.expiresAt) return false;
+  return new Date(sub.expiresAt).getTime() < Date.now();
+}
+
 async function authenticateAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
   const authHeader = req.headers.authorization;
   const customHeader = req.headers["x-admin-passcode"];
@@ -358,6 +368,23 @@ async function authenticateAdmin(req: express.Request, res: express.Response, ne
   }
   
   (req as any).adminId = admin.id;
+
+  if (isExpiredAdmin(admin.id)) {
+    const allowedPaths = [
+      "/api/stats/admin",
+      "/api/settings",
+    ];
+    const path = req.path;
+    const isExport = path.includes("/export.xlsx") || path.includes("/export.csv");
+    if (req.method === "GET" && (allowedPaths.includes(path) || isExport)) {
+      return next();
+    }
+    return res.status(403).json({ 
+      error: "license_expired", 
+      message: "רישיון המערכת פג. הנתונים שמורים, אך לא ניתן לבצע פעולה זו." 
+    });
+  }
+
   next();
 }
 
@@ -376,6 +403,13 @@ async function authenticateCaller(req: express.Request, res: express.Response, n
     : memory.callers.find((item) => item.phone === normalizedPhone);
   if (!caller) {
     return res.status(401).json({ error: "Caller phone not registered" });
+  }
+  
+  if (isExpiredAdmin(caller.adminId)) {
+    return res.status(402).json({ 
+      error: "license_expired", 
+      message: "רישיון המערכת פג. אנא פנה למנהל המטה." 
+    });
   }
   
   const requestedCallerId = callerIdQuery || callerIdParam;
@@ -943,7 +977,7 @@ async function loadPrismaStore() {
   memory.callLogs = callLogs.map((item: any) => ({ ...item, timestamp: new Date(item.timestamp) }));
   memory.settings = settings.map((item: any) => ({ adminId: item.adminId, key: item.key, value: item.value }));
   memory.admins = admins.map((item: any) => ({ ...item, createdAt: new Date(item.createdAt).toISOString(), approvedAt: item.approvedAt ? new Date(item.approvedAt).toISOString() : null }));
-  memory.subscriptions = subscriptions.map((item: any) => ({ ...item, createdAt: new Date(item.createdAt).toISOString() }));
+  memory.subscriptions = subscriptions.map((item: any) => ({ ...item, createdAt: new Date(item.createdAt).toISOString(), expiresAt: item.expiresAt ? new Date(item.expiresAt).toISOString() : null }));
   memory.ids = {
     project: nextId(memory.projects),
     caller: nextId(memory.callers),
@@ -1029,7 +1063,17 @@ async function persistAdminRecord(admin: any) {
 
 async function persistSubscriptionRecord(subscription: any) {
   if (!prisma) return saveMemoryStore();
-  const data = { id: Number(subscription.id), adminId: Number(subscription.adminId), planId: subscription.planId || "monthly", status: subscription.status || "PENDING", provider: subscription.provider || "bank_transfer", amount: Number(subscription.amount) || 0, currency: subscription.currency || "ILS", createdAt: new Date(subscription.createdAt || Date.now()) };
+  const data = { 
+    id: Number(subscription.id), 
+    adminId: Number(subscription.adminId), 
+    planId: subscription.planId || "monthly", 
+    status: subscription.status || "PENDING", 
+    provider: subscription.provider || "bank_transfer", 
+    amount: Number(subscription.amount) || 0, 
+    currency: subscription.currency || "ILS", 
+    createdAt: new Date(subscription.createdAt || Date.now()),
+    expiresAt: subscription.expiresAt ? new Date(subscription.expiresAt) : null
+  };
   await prisma.subscription.upsert({ where: { id: data.id }, update: data, create: data });
 }
 
@@ -1069,7 +1113,7 @@ async function loadMemoryStore() {
     memory.callLogs = (parsed.callLogs || []).map((item: any) => ({ ...item, timestamp: new Date(item.timestamp) }));
     memory.settings = parsed.settings || [];
     memory.admins = parsed.admins || [];
-    memory.subscriptions = parsed.subscriptions || [];
+    memory.subscriptions = (parsed.subscriptions || []).map((item: any) => ({ ...item, expiresAt: item.expiresAt ? new Date(item.expiresAt).toISOString() : null }));
     memory.ids = { ...memory.ids, ...(parsed.ids || {}) };
   } catch (error: any) {
     if (error?.code !== "ENOENT") console.error("Error loading local data:", error);
@@ -1325,6 +1369,13 @@ app.post("/api/login", rateLimiter(20, 60000), async (req, res) => {
       if (existing) adminId = existing.adminId;
     }
 
+    if (isExpiredAdmin(adminId)) {
+      return res.status(402).json({ 
+        error: "license_expired", 
+        message: "רישיון המערכת פג. לא ניתן להתחבר." 
+      });
+    }
+
     const caller = ensureCaller(String(name), normalizedPhone, adminId);
     await persistCaller(caller);
     if (joinProjectId) {
@@ -1344,7 +1395,7 @@ app.post("/api/admins/validate", rateLimiter(20, 60000), async (req, res) => {
       ? await prisma.admin.findFirst({ where: { passcode, status: "ACTIVE" } })
       : memory.admins.find((item) => item.passcode === passcode && item.status === "ACTIVE");
     if (!admin) return res.status(401).json({ success: false, error: "Invalid passcode" });
-    res.json({ success: true, admin: publicAdmin(admin) });
+    res.json({ success: true, admin: publicAdmin(admin), isExpired: isExpiredAdmin(admin.id) });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
@@ -1421,6 +1472,16 @@ app.post("/api/admins/:adminId/approve", authenticateOwner, async (req, res) => 
   try {
     const admin = memory.admins.find((item) => item.id === Number(req.params.adminId));
     if (!admin) return res.status(404).json({ error: "Admin request not found" });
+    
+    let expiresAtStr = req.body.expiresAt;
+    if (!expiresAtStr) {
+      const oneMonth = new Date();
+      oneMonth.setMonth(oneMonth.getMonth() + 1);
+      expiresAtStr = oneMonth.toISOString();
+    } else {
+      expiresAtStr = new Date(expiresAtStr).toISOString();
+    }
+    
     admin.status = "ACTIVE";
     if (!admin.passcode) admin.passcode = generatePasscode();
     admin.approvedAt = admin.approvedAt || new Date().toISOString();
@@ -1429,7 +1490,38 @@ app.post("/api/admins/:adminId/approve", authenticateOwner, async (req, res) => 
       subscription.status = "ACTIVE";
       subscription.provider = "bank_transfer";
       subscription.paidAt = new Date().toISOString();
+      subscription.expiresAt = expiresAtStr;
     }
+    
+    // Initialize default settings, setting campaign_name to organization
+    const settingsToInit = [
+      { key: "campaign_name", value: admin.organization },
+      { key: "whatsapp_template", value: "שלום {name}, תודה על שיחתנו. נשמח לתמיכתך במועמד/ת." },
+      { key: "target_calls", value: "5000" },
+      { key: "call_status_options", value: JSON.stringify(defaultCallStatusOptions) },
+      { key: "archived_project_ids", value: "[]" }
+    ];
+    
+    if (prisma) {
+      for (const item of settingsToInit) {
+        await prisma.setting.upsert({
+          where: { adminId_key: { adminId: admin.id, key: item.key } },
+          update: item.key === "campaign_name" ? { value: item.value } : {},
+          create: { adminId: admin.id, key: item.key, value: item.value }
+        });
+        settingsCache.set(`${admin.id}_${item.key}`, item.key === "campaign_name" ? item.value : settingsCache.get(`${admin.id}_${item.key}`) || item.value);
+      }
+    } else {
+      for (const item of settingsToInit) {
+        let setting = memory.settings.find(s => s.adminId === admin.id && s.key === item.key);
+        if (setting) {
+          if (item.key === "campaign_name") setting.value = item.value;
+        } else {
+          memory.settings.push({ adminId: admin.id, key: item.key, value: item.value });
+        }
+      }
+    }
+    
     await persistAdminRecord(admin);
     if (subscription) await persistSubscriptionRecord(subscription);
     res.json({ success: true, admin: publicAdmin(admin), passcode: admin.passcode, whatsappUrl: buildPasscodeWhatsAppUrl(admin) });
@@ -1804,7 +1896,7 @@ app.get("/api/stats/admin", authenticateAdmin, async (req, res) => {
     }
 
     const summary = await allStatsFromDb(adminId);
-    const result = { summary, callers, projects };
+    const result = { summary, callers, projects, isExpired: isExpiredAdmin(adminId) };
     setCachedStats(cacheKey, result);
     res.json(result);
   } catch (error: any) { res.status(500).json({ error: error.message }); }

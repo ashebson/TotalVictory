@@ -154,6 +154,7 @@ export default function App() {
     try {
       const res = await fetch(API_URL + "/api/contacts/next?callerId=" + caller.id + "&projectId=" + selectedProject.id, { headers: getCallerHeaders() });
       if (res.ok) setCurrentContact(await res.json());
+      else if (res.status === 402) setErrorMsg("רישיון המערכת פג. אנא פנה למנהל המטה.");
       else if (res.status === 403) setErrorMsg("הפרויקט הזה לא משויך אליך. פנה למנהל לשיוך.");
       else setErrorMsg("שגיאה בטעינת איש קשר. נסה שוב.");
     } catch {
@@ -171,7 +172,16 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, phone, projectId: inviteProjectId || undefined }),
       });
-      if (!res.ok) throw new Error("restore failed");
+      if (!res.ok) {
+        if (res.status === 402) {
+          setErrorMsg("רישיון המערכת פג. אנא פנה למנהל המטה.");
+          localStorage.removeItem("total_victory_caller");
+          localStorage.removeItem("total_victory_project_id");
+          setCaller(null);
+          return;
+        }
+        throw new Error("restore failed");
+      }
       const data = await res.json();
       setCaller(data);
       setPersonalWhatsappTemplate(data.whatsappTemplate || "");
@@ -201,7 +211,13 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: callerNameInput.trim(), phone: callerPhoneInput.trim(), projectId: inviteProjectId || undefined }),
       });
-      if (!res.ok) throw new Error("login failed");
+      if (!res.ok) {
+        if (res.status === 402) {
+          setErrorMsg("רישיון המערכת פג. אנא פנה למנהל המטה.");
+          return;
+        }
+        throw new Error("login failed");
+      }
       const data = await res.json();
       setCaller(data);
       setPersonalWhatsappTemplate(data.whatsappTemplate || "");

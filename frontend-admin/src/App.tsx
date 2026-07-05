@@ -14,7 +14,7 @@ type Summary = { total: number; pending: number; success: number; notInterested:
 type Caller = { id: number; name: string; phone?: string; totalCalls?: number; successCalls?: number; successRate?: number; lastCallTime?: string | null; projects?: Project[] };
 type Project = { id: number; name: string; sourceFileName?: string | null; createdAt: string; stats: Summary; callers: Caller[]; archived?: boolean };
 type CallStatusOption = { id: string; label: string; active: boolean; className: string };
-type AdminRequest = { id: number; fullName: string; email: string; phone: string; organization: string; status: string; createdAt: string; approvedAt?: string | null; passcode?: string; subscriptions?: { planId?: string; status?: string }[] };
+type AdminRequest = { id: number; fullName: string; email: string; phone: string; organization: string; status: string; createdAt: string; approvedAt?: string | null; passcode?: string; subscriptions?: { planId?: string; status?: string; expiresAt?: string }[] };
 
 const defaultCallStatusOptions: CallStatusOption[] = [
   { id: "SUCCESS", label: "שיחה מוצלחת", active: true, className: "success" },
@@ -42,6 +42,7 @@ function AdminApp() {
   const [summary, setSummary] = useState<Summary>(emptySummary);
   const [callers, setCallers] = useState<Caller[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [isExpired, setIsExpired] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [projectName, setProjectName] = useState("");
@@ -91,7 +92,7 @@ function AdminApp() {
     setSummary(data.summary || emptySummary);
     setCallers(data.callers || []);
     setProjects(data.projects || []);
-
+    setIsExpired(!!data.isExpired);
   };
 
   const fetchAdminRequests = async () => {
@@ -131,9 +132,11 @@ function AdminApp() {
         body: JSON.stringify({ passcode }),
       });
       if (!res.ok) throw new Error("invalid");
+      const data = await res.json();
       setIsAuthenticated(true);
       sessionStorage.setItem("admin_authenticated", "true");
       sessionStorage.setItem("admin_passcode", passcode);
+      setIsExpired(!!data.isExpired);
     } catch {
       setPasscodeError(true);
     }
@@ -254,13 +257,17 @@ function AdminApp() {
   const xlsxExportUrl = (project: Project) => API_URL + "/api/projects/" + project.id + "/export.xlsx?passcode=" + encodeURIComponent(sessionStorage.getItem("admin_passcode") || passcode);
   const callerJoinUrl = (project: Project) => CALLER_URL + "?caller=1&projectId=" + project.id;
 
-  const approveAdminRequest = async (request: AdminRequest) => {
+  const approveAdminRequest = async (request: AdminRequest, expiresAt?: string) => {
     const approved = window.confirm("לאשר את " + request.fullName + " כמנהל פעיל וליצור לו קוד גישה?");
     if (!approved) return;
     setLoading(true);
     setApprovedAdmin(null);
     try {
-      const res = await fetch(API_URL + "/api/admins/" + request.id + "/approve", { method: "POST", headers: getAdminHeaders() });
+      const res = await fetch(API_URL + "/api/admins/" + request.id + "/approve", { 
+        method: "POST", 
+        headers: getAdminHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ expiresAt })
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "approval failed");
       setApprovedAdmin({ name: request.fullName, passcode: data.passcode, whatsappUrl: data.whatsappUrl });
@@ -387,6 +394,56 @@ function AdminApp() {
     );
   }
 
+  if (isExpired) {
+    return (
+      <div className="admin-container">
+        <aside className="admin-sidebar">
+          <div className="sidebar-header">
+            <h2>{settings.campaign_name || "מטה טלפנים דיגיטלי"}</h2>
+            <span className="expired-badge-sidebar" style={{ backgroundColor: "#ff4d4f", color: "white", fontSize: "11px", padding: "2px 6px", borderRadius: "4px", marginRight: "6px" }}>רישיון פג</span>
+          </div>
+          <nav className="sidebar-nav">
+            <button className="nav-item active" style={{ color: "#ff4d4f", borderColor: "#ff4d4f" }}>⚠️ תוקף רישיון פג</button>
+          </nav>
+          <button onClick={() => { handleLogout(); }} className="btn-sidebar-logout">יציאה</button>
+        </aside>
+        <main className="admin-content">
+          <div className="expired-overlay-panel card-enter-anim" dir="rtl" style={{ display: "flex", justifyContent: "center", alignItems: "center", padding: "40px 20px" }}>
+            <div className="expired-card" style={{ maxWidth: "600px", width: "100%", background: "rgba(25, 25, 35, 0.65)", backdropFilter: "blur(12px)", border: "1px solid rgba(255, 77, 79, 0.3)", borderRadius: "16px", padding: "30px", textAlign: "center", boxShadow: "0 8px 32px rgba(0, 0, 0, 0.3)" }}>
+              <span className="expired-icon" style={{ fontSize: "48px", display: "block", marginBottom: "15px" }}>⚠️</span>
+              <h2 style={{ fontSize: "24px", color: "#ff4d4f", marginBottom: "15px" }}>תוקף הרישיון פג</h2>
+              <p style={{ color: "#e3e3e3", marginBottom: "10px", lineHeight: "1.6" }}>תוקף הרישיון עבור מטה זה פג. כל הנתונים, המתפקדים והערות הטלפנים שמורים ומאובטחים לחלוטין במערכת.</p>
+              <p className="sub" style={{ color: "#a0a0a0", fontSize: "14px", marginBottom: "25px", lineHeight: "1.6" }}>לנוחיותך, תוכל להוריד כעת את קבצי ה-Excel (XLSX) וה-CSV המעודכנים המכילים את כל תוצאות השיחות, הערות הטלפנים והסטטוסים האחרונים:</p>
+              
+              <div className="expired-projects-list" style={{ display: "flex", flexDirection: "column", gap: "12px", marginBottom: "25px" }}>
+                {projects.length === 0 ? (
+                  <div className="empty-state" style={{ color: "#808080", padding: "20px" }}>לא נמצאו פרויקטים להורדה.</div>
+                ) : (
+                  projects.map((project) => (
+                    <div className="expired-project-row" key={project.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(25, 25, 35, 0.4)", padding: "12px 16px", borderRadius: "8px", border: "1px solid rgba(255, 255, 255, 0.05)" }}>
+                      <div className="proj-info" style={{ textAlign: "right" }}>
+                        <strong style={{ display: "block", color: "white", fontSize: "15px", marginBottom: "4px" }}>{project.name}</strong>
+                        <span style={{ fontSize: "12px", color: "#a0a0a0" }}>{project.stats?.total || 0} רשומות · {project.stats?.totalCalled || 0} שיחות שבוצעו</span>
+                      </div>
+                      <div className="proj-downloads" style={{ display: "flex", gap: "8px" }}>
+                        <a href={xlsxExportUrl(project)} className="btn-download-expired" style={{ background: "#217346", color: "white", padding: "6px 12px", borderRadius: "6px", fontSize: "13px", textDecoration: "none", fontWeight: "500" }} target="_blank" rel="noreferrer">הורד XLSX מעודכן</a>
+                        <a href={csvExportUrl(project)} className="btn-download-expired secondary" style={{ background: "rgba(255,255,255,0.08)", color: "white", padding: "6px 12px", borderRadius: "6px", fontSize: "13px", textDecoration: "none", fontWeight: "500", border: "1px solid rgba(255,255,255,0.1)" }} target="_blank" rel="noreferrer">פתח CSV מעודכן</a>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+              
+              <div className="contact-owner-note" style={{ fontSize: "13px", color: "#a0a0a0", paddingTop: "15px", borderTop: "1px solid rgba(255, 255, 255, 0.08)" }}>
+                להארכת המנוי וחידוש הרישיון, אנא פנה למנהל המערכת.
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="admin-container">
       <aside className="admin-sidebar">
@@ -470,7 +527,32 @@ function AdminApp() {
               <div className="settings-section"><h3>תבנית הודעת וואטסאפ</h3><textarea rows={4} value={settings.whatsapp_template} onChange={(e) => setSettings({ ...settings, whatsapp_template: e.target.value })} placeholder="שלום {name}..." /></div>
               <div className="settings-section"><label>יעד שיחות</label><input type="number" value={settings.target_calls} onChange={(e) => setSettings({ ...settings, target_calls: e.target.value })} /></div>
 
-              {isOwner && <div className="settings-section admin-requests-panel"><div className="settings-section-title"><h3>רישום מנהלים</h3><button type="button" onClick={fetchAdminRequests}>רענן</button></div><p>כאן נשמר יומן מלא של כל מי שנרשם: ממתינים, מאושרים, תאריך הרשמה, תאריך אישור וקוד הגישה.</p>{approvedAdmin && <div className="result-banner success"><strong>{approvedAdmin.name} אושר.</strong><div>קוד גישה: <b>{approvedAdmin.passcode}</b></div>{approvedAdmin.whatsappUrl && <a href={approvedAdmin.whatsappUrl} target="_blank" rel="noreferrer">פתח הודעת וואטסאפ מוכנה</a>}</div>}{adminRequestsError && <div className="error-banner">{adminRequestsError}</div>}{adminRequests.length === 0 ? <div className="empty-state compact-empty">אין עדיין נרשמים במערכת.</div> : <div className="admin-request-list">{adminRequests.map((request) => { const subscription = request.subscriptions?.[request.subscriptions.length - 1]; const isApproved = request.status === "ACTIVE"; return <div className={"admin-request-row " + (isApproved ? "approved" : "pending")} key={request.id}><div><strong>{request.fullName}</strong><span>{request.organization} · {request.phone} · {request.email}</span><small>סטטוס: {isApproved ? "אושר" : "ממתין"} · מסלול: {subscription?.planId || "monthly"} · הרשמה: {request.createdAt ? new Date(request.createdAt).toLocaleString("he-IL") : "-"}</small><small>אישור: {request.approvedAt ? new Date(request.approvedAt).toLocaleString("he-IL") : "-"} · קוד גישה: {request.passcode || "-"}</small></div>{isApproved ? <span className="approved-badge">אושר</span> : <button type="button" onClick={() => approveAdminRequest(request)} disabled={loading}>אשר מנהל</button>}</div>; })}</div>}<div className="sheet-actions"><a href={API_URL + "/api/admins/registration-requests.csv?passcode=" + encodeURIComponent(sessionStorage.getItem("admin_passcode") || passcode)} target="_blank" rel="noreferrer">הורד רשימת נרשמים CSV</a></div></div>}
+              {isOwner && <div className="settings-section admin-requests-panel"><div className="settings-section-title"><h3>רישום מנהלים</h3><button type="button" onClick={fetchAdminRequests}>רענן</button></div><p>כאן נשמר יומן מלא של כל מי שנרשם: ממתינים, מאושרים, תאריך הרשמה, תאריך אישור וקוד הגישה.</p>{approvedAdmin && <div className="result-banner success"><strong>{approvedAdmin.name} אושר.</strong><div>קוד גישה: <b>{approvedAdmin.passcode}</b></div>{approvedAdmin.whatsappUrl && <a href={approvedAdmin.whatsappUrl} target="_blank" rel="noreferrer">פתח הודעת וואטסאפ מוכנה</a>}</div>}{adminRequestsError && <div className="error-banner">{adminRequestsError}</div>}{adminRequests.length === 0 ? <div className="empty-state compact-empty">אין עדיין נרשמים במערכת.</div> : <div className="admin-request-list">{adminRequests.map((request) => { 
+  const subscription = request.subscriptions?.[request.subscriptions.length - 1]; 
+  const isApproved = request.status === "ACTIVE"; 
+  const regDate = request.createdAt ? new Date(request.createdAt) : new Date();
+  const defaultExpiry = new Date(regDate.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  return <div className={"admin-request-row " + (isApproved ? "approved" : "pending")} key={request.id}>
+    <div>
+      <strong>{request.fullName}</strong>
+      <span>{request.organization} · {request.phone} · {request.email}</span>
+      <small>סטטוס: {isApproved ? "אושר" : "ממתין"} · מסלול: חודשי - 990 ₪ · הרשמה: {request.createdAt ? new Date(request.createdAt).toLocaleString("he-IL") : "-"}</small>
+      <small>אישור: {request.approvedAt ? new Date(request.approvedAt).toLocaleString("he-IL") : "-"} {isApproved && ` · תפוגה: ${subscription?.expiresAt ? new Date(subscription.expiresAt).toLocaleDateString("he-IL") : "חודש מהאישור"}`} · קוד גישה: {request.passcode || "-"}</small>
+    </div>
+    {isApproved ? <span className="approved-badge">אושר</span> : (
+      <div style={{ display: "flex", flexDirection: "column", gap: "8px", alignItems: "flex-end" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          <label style={{ fontSize: "12px", color: "#a0a0a0" }}>תאריך תפוגה:</label>
+          <input type="date" id={`expiry-${request.id}`} defaultValue={defaultExpiry} style={{ background: "#252535", color: "white", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", padding: "4px 8px", fontSize: "12px" }} />
+        </div>
+        <button type="button" onClick={() => {
+          const input = document.getElementById(`expiry-${request.id}`) as HTMLInputElement | null;
+          approveAdminRequest(request, input?.value);
+        }} disabled={loading}>אשר מנהל</button>
+      </div>
+    )}
+  </div>; 
+})}</div>}<div className="sheet-actions"><a href={API_URL + "/api/admins/registration-requests.csv?passcode=" + encodeURIComponent(sessionStorage.getItem("admin_passcode") || passcode)} target="_blank" rel="noreferrer">הורד רשימת נרשמים CSV</a></div></div>}
               <div className="settings-section call-status-settings">
                 <div className="settings-section-title"><h3>אפשרויות סימון לאחר שיחה</h3><button type="button" onClick={resetCallStatusOptions}>איפוס לברירת מחדל</button></div>
                 <p>אפשר לשנות את שם הכפתורים ולהסתיר אפשרות שאינה בשימוש. המשמעות המערכתית נשארת קבועה כדי שהדוחות והסבבים החוזרים יישארו מסודרים.</p>

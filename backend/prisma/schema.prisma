@@ -123,4 +123,5 @@ model Subscription {
   amount    Int
   currency  String   @default("ILS")
   createdAt DateTime @default(now())
+  expiresAt DateTime?
 }

@@ -88,7 +88,7 @@ export default function LandingPage({ onLogin, onRegister }: LandingPageProps) {
         <div className="header-container">
           <div className="landing-logo">
             <span className="logo-icon">🏆</span>
-            <span className="logo-text">TOTAL VICTORY</span>
+            <span className="logo-text">TVictory</span>
             <span className="logo-badge">הניצחון המוחלט</span>
           </div>
           <nav className="landing-nav">
@@ -114,7 +114,7 @@ export default function LandingPage({ onLogin, onRegister }: LandingPageProps) {
               <span className="gradient-text">לקולות בקלפי.</span>
             </h1>
             <p className="hero-desc">
-              מערכת טוטאל ויקטורי (Total Victory) מספקת מעטפת מושלמת לקמפיין בחירות מנצח: טעינת רשימות בוחרים מאקסל, חלוקת משימות לטלפנים, ניטור הספקים ושידורים חיים למסכי המטה בזמן אמת.
+              מערכת טי ויקטורי (TVictory) מספקת מעטפת מושלמת לקמפיין בחירות מנצח: טעינת רשימות בוחרים מאקסל, חלוקת משימות לטלפנים, ניטור הספקים ושידורים חיים למסכי המטה בזמן אמת.
             </p>
             <div className="hero-actions">
               <button className="btn-hero-primary" onClick={onRegister}>התחל קמפיין עכשיו</button>
@@ -139,7 +139,7 @@ export default function LandingPage({ onLogin, onRegister }: LandingPageProps) {
                   <span className="dot yellow"></span>
                   <span className="dot green"></span>
                 </div>
-                <div className="sim-title">Total Victory - לוח בקרה מנהל (הדמיה)</div>
+                <div className="sim-title">TVictory - לוח בקרה מנהל (הדמיה)</div>
                 <div className="sim-live-badge">שידור חי • LIVE</div>
               </div>
 
@@ -407,10 +407,10 @@ export default function LandingPage({ onLogin, onRegister }: LandingPageProps) {
         <div className="footer-container">
           <div className="footer-logo">
             <span>🏆</span>
-            <span>TOTAL VICTORY</span>
+            <span>TVictory</span>
           </div>
           <div className="footer-copyright">
-            © {new Date().getFullYear()} Total Victory. כל הזכויות שמורות. <br />
+            © {new Date().getFullYear()} TVictory. כל הזכויות שמורות. <br />
             הניצחון המוחלט של המטה שלך מתחיל כאן.
           </div>
         </div>

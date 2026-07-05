@@ -24,6 +24,98 @@ const defaultCallStatusOptions: CallStatusOption[] = [
 ];
 
 
+function CampaignCountdown({ endDateStr }: { endDateStr: string }) {
+  const [timeLeft, setTimeLeft] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0, ended: false });
+
+  useEffect(() => {
+    const calculateTime = () => {
+      const difference = +new Date(endDateStr) - +new Date();
+      if (difference <= 0) {
+        setTimeLeft({ days: 0, hours: 0, minutes: 0, seconds: 0, ended: true });
+        return;
+      }
+      setTimeLeft({
+        days: Math.floor(difference / (1000 * 60 * 60 * 24)),
+        hours: Math.floor((difference / (1000 * 60 * 60)) % 24),
+        minutes: Math.floor((difference / 1000 / 60) % 60),
+        seconds: Math.floor((difference / 1000) % 60),
+        ended: false
+      });
+    };
+
+    calculateTime();
+    const interval = setInterval(calculateTime, 1000);
+    return () => clearInterval(interval);
+  }, [endDateStr]);
+
+  const totalHoursLeft = timeLeft.days * 24 + timeLeft.hours;
+  
+  let cardClass = "timeline-normal";
+  let title = "זמן נותר לסיום הקמפיין";
+  let glowColor = "rgba(79, 110, 242, 0.2)";
+  let borderColor = "rgba(79, 110, 242, 0.4)";
+  
+  if (timeLeft.ended) {
+    cardClass = "timeline-ended";
+    title = "הקמפיין הסתיים";
+    glowColor = "rgba(255, 255, 255, 0.05)";
+    borderColor = "rgba(255, 255, 255, 0.1)";
+  } else if (totalHoursLeft < 1) {
+    cardClass = "timeline-critical pulse-danger";
+    title = "⏰ שעה אחרונה לקמפיין! כל קול קובע!";
+    glowColor = "rgba(255, 77, 79, 0.4)";
+    borderColor = "rgba(255, 77, 79, 0.8)";
+  } else if (timeLeft.days < 1) {
+    cardClass = "timeline-warning pulse-warn";
+    title = "⚠️ היום האחרון לקמפיין! מגבירים קצב!";
+    glowColor = "rgba(255, 193, 7, 0.3)";
+    borderColor = "rgba(255, 193, 7, 0.6)";
+  }
+
+  return (
+    <div className={`campaign-timeline-card ${cardClass}`} style={{
+      background: "rgba(25, 25, 35, 0.65)",
+      backdropFilter: "blur(12px)",
+      border: `1px solid ${borderColor}`,
+      borderRadius: "16px",
+      padding: "20px",
+      marginBottom: "25px",
+      boxShadow: `0 8px 32px ${glowColor}`,
+      textAlign: "right",
+      direction: "rtl"
+    }}>
+      <h3 style={{ margin: "0 0 15px 0", fontSize: "16px", color: timeLeft.ended ? "#a0a0a0" : "#ffffff", fontWeight: "600", display: "flex", alignItems: "center", gap: "8px" }}>
+        <span>📊</span> {title}
+      </h3>
+      {timeLeft.ended ? (
+        <div style={{ fontSize: "24px", fontWeight: "bold", color: "#ff4d4f" }}>הקמפיין הגיע לסיומו הרשמי! 🏁</div>
+      ) : (
+        <div className="countdown-display" style={{ display: "flex", gap: "20px", alignItems: "center", flexWrap: "wrap" }}>
+          <div className="countdown-item" style={{ background: "rgba(255,255,255,0.03)", padding: "10px 16px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.05)", minWidth: "80px", textAlign: "center" }}>
+            <span style={{ fontSize: "28px", fontWeight: "bold", display: "block", color: timeLeft.days === 0 ? "#ffc107" : "#4f6ef2" }}>{timeLeft.days}</span>
+            <span style={{ fontSize: "12px", color: "#a0a0a0" }}>ימים</span>
+          </div>
+          <div className="countdown-item" style={{ background: "rgba(255,255,255,0.03)", padding: "10px 16px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.05)", minWidth: "80px", textAlign: "center" }}>
+            <span style={{ fontSize: "28px", fontWeight: "bold", display: "block", color: totalHoursLeft < 24 ? "#ffc107" : "#4f6ef2" }}>{timeLeft.hours}</span>
+            <span style={{ fontSize: "12px", color: "#a0a0a0" }}>שעות</span>
+          </div>
+          <div className="countdown-item" style={{ background: "rgba(255,255,255,0.03)", padding: "10px 16px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.05)", minWidth: "80px", textAlign: "center" }}>
+            <span style={{ fontSize: "28px", fontWeight: "bold", display: "block", color: totalHoursLeft < 1 ? "#ff4d4f" : "#4f6ef2" }}>{timeLeft.minutes}</span>
+            <span style={{ fontSize: "12px", color: "#a0a0a0" }}>דקות</span>
+          </div>
+          <div className="countdown-item" style={{ background: "rgba(255,255,255,0.03)", padding: "10px 16px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.05)", minWidth: "80px", textAlign: "center" }}>
+            <span style={{ fontSize: "28px", fontWeight: "bold", display: "block", color: totalHoursLeft < 1 ? "#ff4d4f" : "#4f6ef2" }}>{timeLeft.seconds}</span>
+            <span style={{ fontSize: "12px", color: "#a0a0a0" }}>שניות</span>
+          </div>
+          <div style={{ flexGrow: 1, textAlign: "left", fontSize: "13px", color: "#808080" }}>
+            מועד סיום: {new Date(endDateStr).toLocaleString("he-IL")}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const emptySummary: Summary = { total: 0, pending: 0, success: 0, notInterested: 0, noAnswer: 0, invalidNumber: 0, totalCalled: 0 };
 
 function AdminApp() {
@@ -49,7 +141,7 @@ function AdminApp() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadResult, setUploadResult] = useState<string | null>(null);
   const [callerPhoneInputs, setCallerPhoneInputs] = useState<Record<number, string>>({});
-  const [settings, setSettings] = useState({ campaign_name: "מטה טלפנים דיגיטלי", target_calls: "5000", whatsapp_template: "" });
+  const [settings, setSettings] = useState({ campaign_name: "מטה טלפנים דיגיטלי", target_calls: "5000", whatsapp_template: "", campaign_timeline_active: "false", campaign_end_date: "" });
   const [callStatusOptions, setCallStatusOptions] = useState<CallStatusOption[]>(defaultCallStatusOptions);
   const [settingsSaved, setSettingsSaved] = useState(false);
   const isOwner = (sessionStorage.getItem("admin_passcode") || passcode) === "halevi2026";
@@ -112,7 +204,13 @@ function AdminApp() {
     const res = await fetch(API_URL + "/api/settings", { headers: getAdminHeaders() });
     if (!res.ok) return;
     const data = await res.json();
-    setSettings({ campaign_name: data.campaign_name || "מטה טלפנים דיגיטלי", target_calls: data.target_calls || "5000", whatsapp_template: data.whatsapp_template || "" });
+    setSettings({
+      campaign_name: data.campaign_name || "מטה טלפנים דיגיטלי",
+      target_calls: data.target_calls || "5000",
+      whatsapp_template: data.whatsapp_template || "",
+      campaign_timeline_active: data.campaign_timeline_active || "false",
+      campaign_end_date: data.campaign_end_date || ""
+    });
     try {
       const parsed = JSON.parse(data.call_status_options || "[]");
       const byId = new Map(parsed.map((item: CallStatusOption) => [item.id, item]));
@@ -480,6 +578,9 @@ function AdminApp() {
         {activeTab === "dashboard" && (
           <div className="tab-pane card-enter-anim">
             <div className="pane-header"><h1>לוח בקרה</h1><p>סיכום כל הפרויקטים וכל פעילות הטלפנים.</p></div>
+            {settings.campaign_timeline_active === "true" && settings.campaign_end_date && (
+              <CampaignCountdown endDateStr={settings.campaign_end_date} />
+            )}
             <div className="stats-grid stats-grid-rich">
               <div className="stat-card"><span className="stat-label">סה״כ רשומות</span><span className="stat-number">{summary.total}</span><span className="stat-sub">{summary.totalCalled} כבר טופלו</span></div>
               <div className="stat-card success-glow"><span className="stat-label">אחוז הצלחה</span><span className="stat-number">{successRate}%</span><span className="stat-sub">{summary.success} תומכים מתוך {summary.totalCalled || 0} שיחות</span></div>
@@ -547,6 +648,17 @@ function AdminApp() {
               <div className="settings-section"><label>שם המטה / הפרויקט</label><input value={settings.campaign_name} onChange={(e) => setSettings({ ...settings, campaign_name: e.target.value })} placeholder="מטה טלפנים דיגיטלי" /></div>
               <div className="settings-section"><h3>תבנית הודעת וואטסאפ</h3><textarea rows={4} value={settings.whatsapp_template} onChange={(e) => setSettings({ ...settings, whatsapp_template: e.target.value })} placeholder="שלום {name}..." /></div>
               <div className="settings-section"><label>יעד שיחות</label><input type="number" value={settings.target_calls} onChange={(e) => setSettings({ ...settings, target_calls: e.target.value })} /></div>
+              <div className="settings-section" style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                <h3>ציר זמן לקמפיין (ספירה לאחור)</h3>
+                <label className="status-toggle" style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
+                  <input type="checkbox" checked={settings.campaign_timeline_active === "true"} onChange={(e) => setSettings({ ...settings, campaign_timeline_active: e.target.checked ? "true" : "false" })} />
+                  <span>הפעל ספירה לאחור לציר זמן בלוח הבקרה</span>
+                </label>
+                <div style={{ marginTop: "8px" }}>
+                  <label style={{ display: "block", fontSize: "14px", color: "#a0a0a0", marginBottom: "4px" }}>תאריך ושעת סיום הקמפיין:</label>
+                  <input type="datetime-local" value={settings.campaign_end_date || ""} onChange={(e) => setSettings({ ...settings, campaign_end_date: e.target.value })} style={{ background: "#252535", color: "white", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "6px", padding: "8px 12px", width: "100%", maxWidth: "300px" }} />
+                </div>
+              </div>
 
               {isOwner && (
                 <div className="settings-section admin-requests-panel">
@@ -580,8 +692,7 @@ function AdminApp() {
                       ) : (
                         <div className="admin-request-list" style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                           {adminRequests.filter(r => r.status !== "ACTIVE").map((request) => {
-                            const regDate = request.createdAt ? new Date(request.createdAt) : new Date();
-                            const defaultExpiry = new Date(regDate.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+                            const defaultExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
                             return (
                               <div className="admin-request-row pending" key={request.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(0,0,0,0.2)", padding: "12px 16px", borderRadius: "6px", borderRight: "4px solid #ffc107" }}>
                                 <div style={{ textAlign: "right" }}>

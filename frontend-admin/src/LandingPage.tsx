@@ -89,7 +89,6 @@ export default function LandingPage({ onLogin, onRegister }: LandingPageProps) {
           <div className="landing-logo">
             <span className="logo-icon">🏆</span>
             <span className="logo-text">TVictory</span>
-            <span className="logo-badge">הניצחון המוחלט</span>
           </div>
           <nav className="landing-nav">
             <a href="#features">תכונות המערכת</a>
@@ -118,7 +117,6 @@ export default function LandingPage({ onLogin, onRegister }: LandingPageProps) {
             </p>
             <div className="hero-actions">
               <button className="btn-hero-primary" onClick={onRegister}>התחל קמפיין עכשיו</button>
-              <a href="#demo" className="btn-hero-secondary">ראה הדמיית מערכת</a>
             </div>
             <div className="hero-trust">
               <span>✓ מסלול חודשי פשוט</span>
@@ -410,8 +408,7 @@ export default function LandingPage({ onLogin, onRegister }: LandingPageProps) {
             <span>TVictory</span>
           </div>
           <div className="footer-copyright">
-            © {new Date().getFullYear()} TVictory. כל הזכויות שמורות. <br />
-            הניצחון המוחלט של המטה שלך מתחיל כאן.
+            © {new Date().getFullYear()} TVictory. כל הזכויות שמורות.
           </div>
         </div>
       </footer>

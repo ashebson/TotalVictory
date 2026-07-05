@@ -1450,3 +1450,33 @@
   font-weight: 700;
 }
 
+/* Campaign Countdown / Timeline */
+@keyframes pulseDangerGlow {
+  0% { box-shadow: 0 0 12px rgba(255, 77, 79, 0.2); }
+  50% { box-shadow: 0 0 24px rgba(255, 77, 79, 0.6); }
+  100% { box-shadow: 0 0 12px rgba(255, 77, 79, 0.2); }
+}
+
+@keyframes pulseWarnGlow {
+  0% { box-shadow: 0 0 10px rgba(255, 193, 7, 0.15); }
+  50% { box-shadow: 0 0 20px rgba(255, 193, 7, 0.45); }
+  100% { box-shadow: 0 0 10px rgba(255, 193, 7, 0.15); }
+}
+
+.pulse-danger {
+  animation: pulseDangerGlow 2s infinite ease-in-out;
+}
+
+.pulse-warn {
+  animation: pulseWarnGlow 3s infinite ease-in-out;
+}
+
+.campaign-timeline-card {
+  transition: all 0.3s ease;
+}
+
+.campaign-timeline-card:hover {
+  transform: translateY(-2px);
+}
+
+

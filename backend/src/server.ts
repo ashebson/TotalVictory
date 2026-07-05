@@ -1082,7 +1082,13 @@ async function persistProjectUpload(project: Project, previousContactCount: numb
   if (!prisma) return saveMemoryStore();
   await persistProject(project);
   const projectContacts = memory.contacts.filter((contact) => contact.projectId === project.id).slice(previousContactCount);
-  for (const contact of projectContacts) await persistContact(contact);
+  if (projectContacts.length > 0) {
+    const dataList = projectContacts.map(contactDbData);
+    await prisma.contact.createMany({
+      data: dataList,
+      skipDuplicates: true
+    });
+  }
 }
 
 async function persistPrismaStore() {
@@ -1204,6 +1210,7 @@ function normalizeDbContact(row: any): Contact {
 
 function syncMemoryContact(contact: Contact | null) {
   if (!contact) return null;
+  if (prisma) return contact;
   const existing = memory.contacts.find((item) => item.id === contact.id);
   if (existing) Object.assign(existing, contact);
   else memory.contacts.push(contact);
@@ -1635,8 +1642,11 @@ app.post("/api/projects/upload", authenticateAdmin, async (req, res) => {
     const previousContactCount = memory.contacts.filter((contact) => contact.projectId === project.id).length;
     const result = insertContacts(project.id, contacts);
     await persistProjectUpload(project, previousContactCount);
+    if (prisma) {
+      memory.contacts = memory.contacts.filter((c) => c.projectId !== project.id);
+    }
     broadcastStatsUpdate(adminId);
-    res.json({ success: true, project: serializeProject(project), ...result });
+    res.json({ success: true, project: await serializeProjectAsync(project), ...result });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 

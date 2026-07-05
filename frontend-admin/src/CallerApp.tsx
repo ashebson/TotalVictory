@@ -129,8 +129,8 @@ export default function App() {
       if (!res.ok) return;
       const data = await res.json();
       setProjects(data || []);
-      const savedProjectId = Number(localStorage.getItem("total_victory_project_id"));
-      const savedProject = data.find((project: Project) => project.id === savedProjectId);
+      const targetProjectId = inviteProjectId || Number(localStorage.getItem("total_victory_project_id"));
+      const savedProject = data.find((project: Project) => project.id === targetProjectId);
       if (savedProject) setSelectedProject(savedProject);
       else if (data.length === 1) chooseProject(data[0]);
     } catch {
@@ -177,9 +177,9 @@ export default function App() {
       setPersonalWhatsappTemplate(data.whatsappTemplate || "");
       setProjects(data.projects || []);
       localStorage.setItem("total_victory_caller", JSON.stringify({ id: data.id, name: data.name, phone: data.phone }));
-      const savedProjectId = Number(localStorage.getItem("total_victory_project_id"));
-      const savedProject = (data.projects || []).find((project: Project) => project.id === savedProjectId);
-      if (savedProject) setSelectedProject(savedProject);
+      const targetProjectId = inviteProjectId || Number(localStorage.getItem("total_victory_project_id"));
+      const savedProject = (data.projects || []).find((project: Project) => project.id === targetProjectId);
+      if (savedProject) chooseProject(savedProject);
       else if ((data.projects || []).length === 1) chooseProject(data.projects[0]);
       else setSelectedProject(null);
     } catch {
@@ -207,7 +207,10 @@ export default function App() {
       setPersonalWhatsappTemplate(data.whatsappTemplate || "");
       setProjects(data.projects || []);
       localStorage.setItem("total_victory_caller", JSON.stringify({ id: data.id, name: data.name, phone: data.phone }));
-      if ((data.projects || []).length === 1) chooseProject(data.projects[0]);
+      const targetProjectId = inviteProjectId || Number(localStorage.getItem("total_victory_project_id"));
+      const savedProject = (data.projects || []).find((project: Project) => project.id === targetProjectId);
+      if (savedProject) chooseProject(savedProject);
+      else if ((data.projects || []).length === 1) chooseProject(data.projects[0]);
     } catch {
       setErrorMsg("שגיאה בחיבור למערכת.");
     } finally {

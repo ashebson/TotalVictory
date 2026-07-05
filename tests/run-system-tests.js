@@ -28,7 +28,7 @@ function runCommand(name, command, commandArgs, options) {
   options = options || {};
   return new Promise((resolve, reject) => {
     const start = performance.now();
-    const child = spawn(command, commandArgs, { cwd: options.cwd || ROOT, env: { ...process.env, ...(options.env || {}) }, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, commandArgs, { cwd: options.cwd || ROOT, env: { ...process.env, ...(options.env || {}) }, shell: true, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
@@ -243,6 +243,26 @@ async function runBackendIntegrationChecks() {
       assert.equal(mismatch.status, 403);
       return "caller identity is enforced";
     });
+    await step("Caller saves personal WhatsApp template settings", async () => {
+      const caller = callers[0];
+      const settingsSave = await request(server.baseUrl, "POST", "/api/callers/" + caller.id + "/settings", {
+        headers: { "x-caller-phone": caller.phone },
+        body: { whatsappTemplate: "שלום {name}, תודה רבה!" }
+      });
+      assert.equal(settingsSave.status, 200);
+      assert.equal(settingsSave.data.success, true);
+      assert.equal(settingsSave.data.caller.whatsappTemplate, "שלום {name}, תודה רבה!");
+      return "personal WhatsApp template saved successfully";
+    });
+    await step("Caller registers and joins a project independently via invite link", async () => {
+      const invitePhone = "0539999999";
+      const login = await request(server.baseUrl, "POST", "/api/login", {
+        body: { name: "טלפן הצטרפות עצמאית", phone: invitePhone, projectId }
+      });
+      assert.equal(login.status, 200);
+      assert.ok(login.data.projects.some((p) => p.id === projectId), "caller should be linked to the invite project");
+      return "caller joined project independently";
+    });
     let allocated = [];
     await step("30 simultaneous callers receive unique contacts", async () => {
       const started = performance.now();
@@ -297,6 +317,11 @@ async function runBackendIntegrationChecks() {
       const exportCsv = await request(server.baseUrl, "GET", "/api/projects/" + projectId + "/export.csv?passcode=" + ADMIN_PASSCODE);
       assert.equal(exportCsv.status, 200);
       assert.match(exportCsv.raw, /בדיקת מערכת/);
+      const noPass = await request(server.baseUrl, "GET", "/api/projects/" + projectId + "/export.xlsx");
+      assert.equal(noPass.status, 401);
+      const exportXlsx = await request(server.baseUrl, "GET", "/api/projects/" + projectId + "/export.xlsx?passcode=" + ADMIN_PASSCODE);
+      assert.equal(exportXlsx.status, 200);
+      assert.equal(exportXlsx.headers["content-type"], "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
       const restore = await request(server.baseUrl, "POST", "/api/projects/" + projectId + "/restore", { headers: adminHeaders });
       assert.equal(restore.status, 200);
       assert.equal(restore.data.archived, false);

@@ -42,8 +42,14 @@ function runCommand(name, command, commandArgs, options) {
     });
   });
 }
+let requestCounter = 0;
 function request(baseUrl, method, route, options) {
   options = options || {};
+  const headers = { ...options.headers };
+  if (!headers["x-forwarded-for"]) {
+    requestCounter++;
+    headers["x-forwarded-for"] = "127.0.0." + (requestCounter % 250);
+  }
   return new Promise((resolve, reject) => {
     const started = performance.now();
     const url = new URL(route, baseUrl);
@@ -53,7 +59,7 @@ function request(baseUrl, method, route, options) {
       hostname: url.hostname,
       port: url.port,
       path: url.pathname + url.search,
-      headers: { ...(payload ? { "content-type": "application/json", "content-length": Buffer.byteLength(payload) } : {}), ...(options.headers || {}) },
+      headers: { ...(payload ? { "content-type": "application/json", "content-length": Buffer.byteLength(payload) } : {}), ...headers },
       timeout: options.timeoutMs || 8000,
     }, (res) => {
       const chunks = [];
@@ -511,6 +517,29 @@ async function runBackendIntegrationChecks() {
       assert.equal(contactsReset.status, 403);
       assert.equal(callersReset.status, 403);
       return "reset routes returned 403";
+    });
+    await step("Security headers are present on responses", async () => {
+      const res = await request(server.baseUrl, "GET", "/api/settings");
+      assert.equal(res.headers["x-frame-options"], "DENY");
+      assert.equal(res.headers["x-content-type-options"], "nosniff");
+      assert.equal(res.headers["x-xss-protection"], "1; mode=block");
+      assert.match(res.headers["strict-transport-security"], /max-age=/);
+      return "headers verified successfully";
+    });
+    await step("Rate limiting blocks brute-force login attempts", async () => {
+      // The rate limit for login is 50 requests per windowMs.
+      // We will make 51 requests to /api/login and verify the 51st returns 429.
+      const payload = { name: "טלפן ספאם", phone: "0501112222" };
+      const headers = { "x-forwarded-for": "8.8.8.8" };
+      for (let i = 0; i < 50; i++) {
+        const res = await request(server.baseUrl, "POST", "/api/login", { body: payload, headers });
+        // The first 50 logins should return 200 or 400 (if invalid params), but NOT 429
+        assert.notEqual(res.status, 429);
+      }
+      const resBlocked = await request(server.baseUrl, "POST", "/api/login", { body: payload, headers });
+      assert.equal(resBlocked.status, 429);
+      assert.equal(resBlocked.data.error, "Too many requests, please try again later.");
+      return "rate limiter blocked 51st attempt with 429";
     });
   } finally {
     await step("Stop isolated backend test server", async () => { await server.stop(); return "temporary database removed"; });

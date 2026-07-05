@@ -38,7 +38,6 @@ app.use((req, res, next) => {
 const ipRequestCounts = new Map<string, { count: number; resetTime: number }>();
 function rateLimiter(limit: number, windowMs: number) {
   return (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    if (process.env.NODE_ENV === "test") return next();
     const rawIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown";
     const ip = Array.isArray(rawIp) ? rawIp[0] : String(rawIp).split(",")[0].trim();
     const now = Date.now();
@@ -1355,7 +1354,7 @@ function buildPasscodeWhatsAppUrl(admin: any) {
 
 io.on("connection", (socket) => { console.log("Client connected:", socket.id); socket.on("disconnect", () => console.log("Client disconnected:", socket.id)); });
 
-app.post("/api/login", rateLimiter(20, 60000), async (req, res) => {
+app.post("/api/login", rateLimiter(50, 60000), async (req, res) => {
   try {
     const { name, phone } = req.body;
     const joinProjectId = Number(req.body.projectId || 0);
@@ -1395,7 +1394,7 @@ app.post("/api/login", rateLimiter(20, 60000), async (req, res) => {
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
-app.post("/api/admins/validate", rateLimiter(20, 60000), async (req, res) => {
+app.post("/api/admins/validate", rateLimiter(50, 60000), async (req, res) => {
   try {
     const passcode = String(req.body.passcode || "");
     if (passcode === "halevi2026") return res.json({ success: true, admin: { id: 0, fullName: "מנהל ראשי", planId: "legacy" } });

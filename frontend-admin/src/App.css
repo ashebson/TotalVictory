@@ -1404,3 +1404,49 @@
   background: rgba(239, 68, 68, 0.25) !important;
   border: 1px solid rgba(239, 68, 68, 0.5) !important;
 }
+
+/* Back button on Auth Page */
+.btn-back-landing {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #f8fafc;
+  padding: 10px 20px;
+  border-radius: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.2s;
+  z-index: 10;
+  direction: rtl;
+}
+
+.btn-back-landing:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateX(-4px); /* RTL direction */
+}
+
+/* Static price badge */
+.plan-static-badge {
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.22);
+  color: #93c5fd;
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 0.95rem;
+  width: 100%;
+  text-align: right;
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+
+.plan-static-badge strong {
+  color: #fff;
+  font-weight: 700;
+}
+

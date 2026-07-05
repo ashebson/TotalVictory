@@ -1267,7 +1267,7 @@ async function ownerAdminRegistrations() {
 }
 
 function planLabel(planId: string) {
-  return planId === "annual" ? 'שנתי - 1,990 ש"ח' : 'חודשי - 199 ש"ח';
+  return 'חודשי - 990 ש"ח (עד 50 טלפנים)';
 }
 
 function formatWhatsAppPhone(phone: string) {
@@ -1350,8 +1350,7 @@ app.post("/api/admins/validate", rateLimiter(20, 60000), async (req, res) => {
 
 app.get("/api/subscriptions/plans", (_req, res) => {
   res.json([
-    { id: "monthly", name: "מנוי מנהל חודשי", price: 199, currency: "ILS", interval: "month" },
-    { id: "annual", name: "מנוי מנהל שנתי", price: 1990, currency: "ILS", interval: "year" }
+    { id: "monthly", name: "מנוי חודשי (עד 50 טלפנים)", price: 990, currency: "ILS", interval: "month" }
   ]);
 });
 
@@ -1372,7 +1371,7 @@ app.post("/api/admins/register", rateLimiter(5, 60000), async (req, res) => {
       Object.assign(admin, { fullName, email, phone, organization, status: admin.status === "ACTIVE" ? "ACTIVE" : "PENDING" });
     }
 
-    const subscription = { id: memory.ids.subscription++, adminId: admin.id, planId, status: admin.status === "ACTIVE" ? "ACTIVE" : "PENDING", provider: "bank_transfer", amount: planId === "annual" ? 1990 : 199, currency: "ILS", createdAt: new Date().toISOString() };
+    const subscription = { id: memory.ids.subscription++, adminId: admin.id, planId: "monthly", status: admin.status === "ACTIVE" ? "ACTIVE" : "PENDING", provider: "bank_transfer", amount: 990, currency: "ILS", createdAt: new Date().toISOString() };
     memory.subscriptions.push(subscription);
 
     await persistAdminRecord(admin);

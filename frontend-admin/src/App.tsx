@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import "./App.css";
 import CallerApp from "./CallerApp";
+import LandingPage from "./LandingPage";
 
 // Vercel build trigger - 2026-07-02 17:41
 const PUBLIC_API_URL = "https://total-victory.onrender.com";
@@ -27,6 +28,7 @@ const emptySummary: Summary = { total: 0, pending: 0, success: 0, notInterested:
 
 function AdminApp() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [showAuth, setShowAuth] = useState(false);
   const [passcode, setPasscode] = useState(() => sessionStorage.getItem("admin_passcode") || "");
   const [passcodeError, setPasscodeError] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
@@ -316,50 +318,74 @@ function AdminApp() {
     .sort((a, b) => percent(b.stats.totalCalled, b.stats.total) - percent(a.stats.totalCalled, a.stats.total))
     .slice(0, 5);
 
-  if (!isAuthenticated) return (
-    <div className="auth-page auth-page-clean">
-      <section className="auth-shell auth-shell-compact card-enter-anim" dir="rtl">
-        <header className="auth-brand">
-          <span className="auth-eyebrow">מערכת בחירות</span>
-          <h1>מטה טלפנים דיגיטלי</h1>
-        </header>
+  if (!isAuthenticated) {
+    if (!showAuth) {
+      return (
+        <LandingPage 
+          onLogin={() => { setShowAuth(true); setAuthMode("login"); }}
+          onRegister={() => { setShowAuth(true); setAuthMode("register"); }}
+        />
+      );
+    }
 
-        <div className="auth-panel">
-          <div className="auth-tabs" role="tablist" aria-label="בחירת פעולה">
-            <button type="button" className={authMode === "login" ? "active" : ""} onClick={() => setAuthMode("login")}>כניסה למשתמש קיים</button>
-            <button type="button" className={authMode === "register" ? "active" : ""} onClick={() => setAuthMode("register")}>הרשמה למנהל חדש</button>
+    return (
+      <div className="auth-page auth-page-clean">
+        <button 
+          type="button" 
+          className="btn-back-landing" 
+          onClick={() => setShowAuth(false)}
+          title="חזרה לדף הבית"
+        >
+          ← חזרה לדף הבית
+        </button>
+        <section className="auth-shell auth-shell-compact card-enter-anim" dir="rtl">
+          <header className="auth-brand">
+            <span className="auth-eyebrow">מערכת בחירות</span>
+            <h1>מטה טלפנים דיגיטלי</h1>
+          </header>
+
+          <div className="auth-panel">
+            <div className="auth-tabs" role="tablist" aria-label="בחירת פעולה">
+              <button type="button" className={authMode === "login" ? "active" : ""} onClick={() => setAuthMode("login")}>כניסה למשתמש קיים</button>
+              <button type="button" className={authMode === "register" ? "active" : ""} onClick={() => setAuthMode("register")}>הרשמה למנהל חדש</button>
+            </div>
+
+            {authMode === "login" ? (
+              <form className="auth-form" onSubmit={handleLogin}>
+                <div className="auth-form-header">
+                  <h2>כניסה לניהול</h2>
+                </div>
+                {passcodeError && <div className="error-banner">קוד גישה שגוי, נסה שנית.</div>}
+                <div className="input-group"><label htmlFor="passcode">קוד גישה מנהל</label><input id="passcode" type="password" placeholder="הכנס קוד גישה..." value={passcode} onChange={(e) => setPasscode(e.target.value)} required /></div>
+                <button type="submit" className="btn-primary">כניסה לניהול</button>
+              </form>
+            ) : (
+              <form className="auth-form" onSubmit={handleRegisterAdmin}>
+                <div className="auth-form-header">
+                  <h2>הרשמה ורכישת מנוי</h2>
+                </div>
+                <div className="auth-form-grid">
+                  <div className="input-group"><label>שם מלא</label><input value={registerForm.fullName} onChange={(e) => setRegisterForm({ ...registerForm, fullName: e.target.value })} required /></div>
+                  <div className="input-group"><label>אימייל</label><input type="email" value={registerForm.email} onChange={(e) => setRegisterForm({ ...registerForm, email: e.target.value })} required /></div>
+                  <div className="input-group"><label>טלפון</label><input value={registerForm.phone} onChange={(e) => setRegisterForm({ ...registerForm, phone: e.target.value })} required /></div>
+                  <div className="input-group"><label>שם מטה / ארגון</label><input value={registerForm.organization} onChange={(e) => setRegisterForm({ ...registerForm, organization: e.target.value })} required /></div>
+                </div>
+                <div className="input-group">
+                  <label>מסלול מנוי</label>
+                  <div className="plan-static-badge">
+                    <strong>מסלול חודשי מלא</strong> - 990 ₪ / חודש (עד 50 טלפנים בו זמנית)
+                  </div>
+                </div>
+                <div className="payment-note">בסיום ההרשמה הבקשה נשלחת לבדיקה פרטית של בעל המערכת. לאחר אישור התשלום יישלח אליך קוד גישה בצורה מסודרת.</div>
+                {registrationRequest && <div className="result-banner success"><strong>{registrationRequest.message}</strong></div>}
+                <button type="submit" className="btn-primary" disabled={loading}>{loading ? "שולח בקשה..." : "שליחת בקשת הצטרפות"}</button>
+              </form>
+            )}
           </div>
-
-          {authMode === "login" ? (
-            <form className="auth-form" onSubmit={handleLogin}>
-              <div className="auth-form-header">
-                <h2>כניסה לניהול</h2>
-              </div>
-              {passcodeError && <div className="error-banner">קוד גישה שגוי, נסה שנית.</div>}
-              <div className="input-group"><label htmlFor="passcode">קוד גישה מנהל</label><input id="passcode" type="password" placeholder="הכנס קוד גישה..." value={passcode} onChange={(e) => setPasscode(e.target.value)} required /></div>
-              <button type="submit" className="btn-primary">כניסה לניהול</button>
-            </form>
-          ) : (
-            <form className="auth-form" onSubmit={handleRegisterAdmin}>
-              <div className="auth-form-header">
-                <h2>הרשמה ורכישת מנוי</h2>
-              </div>
-              <div className="auth-form-grid">
-                <div className="input-group"><label>שם מלא</label><input value={registerForm.fullName} onChange={(e) => setRegisterForm({ ...registerForm, fullName: e.target.value })} required /></div>
-                <div className="input-group"><label>אימייל</label><input type="email" value={registerForm.email} onChange={(e) => setRegisterForm({ ...registerForm, email: e.target.value })} required /></div>
-                <div className="input-group"><label>טלפון</label><input value={registerForm.phone} onChange={(e) => setRegisterForm({ ...registerForm, phone: e.target.value })} required /></div>
-                <div className="input-group"><label>שם מטה / ארגון</label><input value={registerForm.organization} onChange={(e) => setRegisterForm({ ...registerForm, organization: e.target.value })} required /></div>
-              </div>
-              <div className="input-group"><label>מסלול</label><select value={registerForm.planId} onChange={(e) => setRegisterForm({ ...registerForm, planId: e.target.value })}><option value="monthly">חודשי - 199 ש"ח</option><option value="annual">שנתי - 1,990 ש"ח</option></select></div>
-              <div className="payment-note">בסיום ההרשמה הבקשה נשלחת לבדיקה פרטית של בעל המערכת. לאחר אישור התשלום יישלח אליך קוד גישה בצורה מסודרת.</div>
-              {registrationRequest && <div className="result-banner success"><strong>{registrationRequest.message}</strong></div>}
-              <button type="submit" className="btn-primary" disabled={loading}>{loading ? "שולח בקשה..." : "שליחת בקשת הצטרפות"}</button>
-            </form>
-          )}
-        </div>
-      </section>
-    </div>
-  );
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="admin-container">

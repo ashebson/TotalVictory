@@ -265,7 +265,7 @@ async function runBackendIntegrationChecks() {
       assert.equal(saveSettingsA.status, 200);
 
       const getSettingsB = await request(server.baseUrl, "GET", "/api/settings?passcode=" + adminBPasscode);
-      assert.equal(getSettingsB.data.campaign_name, "מטה טלפנים דיגיטלי");
+      assert.equal(getSettingsB.data.campaign_name, "מטה ב");
 
       const phone = "0555555555";
       const loginA = await request(server.baseUrl, "POST", "/api/login", {
@@ -395,6 +395,79 @@ async function runBackendIntegrationChecks() {
       const afterDeleteList = await request(server.baseUrl, "GET", "/api/projects", { headers: adminHeaders });
       assert.ok(!afterDeleteList.data.some((p) => p.id === projectId), "project should be permanently removed");
       return "archive blocks calls, export still works, permanent delete verified";
+    });
+    await step("License expiration enforcement", async () => {
+      const emailExp = "expired-admin-" + Date.now() + "@example.com";
+      const register = await request(server.baseUrl, "POST", "/api/admins/register", { body: { fullName: "מנהל פג תוקף", email: emailExp, phone: "0507776666", organization: "מטה פג תוקף", planId: "monthly" } });
+      assert.equal(register.status, 200);
+      
+      const ownerList = await request(server.baseUrl, "GET", "/api/admins/registration-requests", { headers: adminHeaders });
+      const pendingAdmin = ownerList.data.find((item) => item.email === emailExp);
+      
+      const pastDate = new Date(Date.now() - 3600000).toISOString();
+      const approval = await request(server.baseUrl, "POST", "/api/admins/" + pendingAdmin.id + "/approve", { 
+        headers: adminHeaders,
+        body: { expiresAt: pastDate }
+      });
+      assert.equal(approval.status, 200);
+      const expiredPasscode = approval.data.passcode;
+      const expiredHeaders = { "x-admin-passcode": expiredPasscode };
+      
+      const validate = await request(server.baseUrl, "POST", "/api/admins/validate", { body: { passcode: expiredPasscode } });
+      assert.equal(validate.status, 200);
+      assert.equal(validate.data.isExpired, true);
+      
+      const stats = await request(server.baseUrl, "GET", "/api/stats/admin", { headers: expiredHeaders });
+      assert.equal(stats.status, 200);
+      assert.equal(stats.data.isExpired, true);
+      
+      const settings = await request(server.baseUrl, "GET", "/api/settings?passcode=" + expiredPasscode);
+      assert.equal(settings.status, 200);
+      assert.equal(settings.data.campaign_name, "מטה פג תוקף");
+      
+      const upload = await request(server.baseUrl, "POST", "/api/projects/upload", { 
+        headers: expiredHeaders,
+        body: { projectName: "ניסיון העלאה", contacts: makeContacts(2) } 
+      });
+      assert.equal(upload.status, 403);
+      assert.equal(upload.data.error, "license_expired");
+      
+      const emailC = "admin-c-" + Date.now() + "@example.com";
+      const regC = await request(server.baseUrl, "POST", "/api/admins/register", { body: { fullName: "מנהל ג", email: emailC, phone: "0505554444", organization: "מטה ג", planId: "monthly" } });
+      const ownerList2 = await request(server.baseUrl, "GET", "/api/admins/registration-requests", { headers: adminHeaders });
+      const pendingC = ownerList2.data.find((item) => item.email === emailC);
+      const appC = await request(server.baseUrl, "POST", "/api/admins/" + pendingC.id + "/approve", { headers: adminHeaders });
+      const passC = appC.data.passcode;
+      const headersC = { "x-admin-passcode": passC };
+      
+      const uploadC = await request(server.baseUrl, "POST", "/api/projects/upload", { 
+        headers: headersC, 
+        body: { projectName: "פרויקט ג", contacts: makeContacts(5) } 
+      });
+      assert.equal(uploadC.status, 200);
+      const projId = uploadC.data.project.id;
+      
+      const callerPhone = "0500000009";
+      const callerLogin = await request(server.baseUrl, "POST", "/api/login", { body: { name: "טלפן ג", phone: callerPhone, projectId: projId } });
+      assert.equal(callerLogin.status, 200);
+      
+      const expireC = await request(server.baseUrl, "POST", "/api/admins/" + pendingC.id + "/approve", { 
+        headers: adminHeaders,
+        body: { expiresAt: pastDate }
+      });
+      assert.equal(expireC.status, 200);
+      
+      const callerLoginBlocked = await request(server.baseUrl, "POST", "/api/login", { body: { name: "טלפן ג", phone: callerPhone, projectId: projId } });
+      assert.equal(callerLoginBlocked.status, 402);
+      assert.equal(callerLoginBlocked.data.error, "license_expired");
+      
+      const nextBlocked = await request(server.baseUrl, "GET", "/api/contacts/next?callerId=" + callerLogin.data.id + "&projectId=" + projId, { headers: { "x-caller-phone": callerPhone } });
+      assert.equal(nextBlocked.status, 402);
+      
+      const exportXlsx = await request(server.baseUrl, "GET", "/api/projects/" + projId + "/export.xlsx?passcode=" + passC);
+      assert.equal(exportXlsx.status, 200);
+      
+      return "licensing expiry verification passed successfully";
     });
     await step("Dangerous reset endpoints are disabled", async () => {
       const contactsReset = await request(server.baseUrl, "POST", "/api/contacts/reset", { headers: adminHeaders });

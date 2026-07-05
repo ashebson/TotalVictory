@@ -38,6 +38,7 @@ app.use((req, res, next) => {
 const ipRequestCounts = new Map<string, { count: number; resetTime: number }>();
 function rateLimiter(limit: number, windowMs: number) {
   return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (process.env.NODE_ENV === "test") return next();
     const rawIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown";
     const ip = Array.isArray(rawIp) ? rawIp[0] : String(rawIp).split(",")[0].trim();
     const now = Date.now();

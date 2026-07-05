@@ -389,7 +389,12 @@ async function runBackendIntegrationChecks() {
       const restore = await request(server.baseUrl, "POST", "/api/projects/" + projectId + "/restore", { headers: adminHeaders });
       assert.equal(restore.status, 200);
       assert.equal(restore.data.archived, false);
-      return "archive blocks calls, export still works";
+      const permanentDelete = await request(server.baseUrl, "DELETE", "/api/projects/" + projectId + "/permanent", { headers: adminHeaders });
+      assert.equal(permanentDelete.status, 200);
+      assert.equal(permanentDelete.data.success, true);
+      const afterDeleteList = await request(server.baseUrl, "GET", "/api/projects", { headers: adminHeaders });
+      assert.ok(!afterDeleteList.data.some((p) => p.id === projectId), "project should be permanently removed");
+      return "archive blocks calls, export still works, permanent delete verified";
     });
     await step("Dangerous reset endpoints are disabled", async () => {
       const contactsReset = await request(server.baseUrl, "POST", "/api/contacts/reset", { headers: adminHeaders });

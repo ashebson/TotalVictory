@@ -1393,3 +1393,14 @@
     grid-template-columns: 1fr;
   }
 }
+
+.danger-button {
+  background: rgba(239, 68, 68, 0.15) !important;
+  border: 1px solid rgba(239, 68, 68, 0.35) !important;
+  color: #ef4444 !important;
+}
+
+.danger-button:hover {
+  background: rgba(239, 68, 68, 0.25) !important;
+  border: 1px solid rgba(239, 68, 68, 0.5) !important;
+}

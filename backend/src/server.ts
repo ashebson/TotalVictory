@@ -1244,6 +1244,40 @@ app.post("/api/projects/:projectId/restore", authenticateAdmin, async (req, res)
   res.json({ success: true, archived: false, project: serializeProject(project) });
 });
 
+app.delete("/api/projects/:projectId/permanent", authenticateAdmin, async (req, res) => {
+  try {
+    const adminId = (req as any).adminId;
+    const projectId = Number(req.params.projectId);
+    const project = memory.projects.find((item) => item.id === projectId && item.adminId === adminId);
+    if (!project) return res.status(404).json({ error: "Project not found" });
+
+    if (prisma) {
+      await prisma.project.delete({ where: { id: projectId } });
+    }
+
+    memory.projects = memory.projects.filter((p) => p.id !== projectId);
+    memory.contacts = memory.contacts.filter((c) => c.projectId !== projectId);
+    memory.callerProjects = memory.callerProjects.filter((l) => l.projectId !== projectId);
+    memory.callLogs = memory.callLogs.filter((l) => l.projectId !== projectId);
+
+    const ids = new Set(archivedProjectIds(adminId));
+    ids.delete(projectId);
+    const value = JSON.stringify([...ids]);
+    let existing = memory.settings.find((item) => item.adminId === adminId && item.key === "archived_project_ids");
+    if (existing) {
+      existing.value = value;
+    } else {
+      memory.settings.push({ adminId, key: "archived_project_ids", value });
+    }
+    await persistSettingsOnly();
+
+    broadcastStatsUpdate(adminId);
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post("/api/projects/:projectId/callers", authenticateAdmin, async (req, res) => {
   try {
     const adminId = (req as any).adminId;

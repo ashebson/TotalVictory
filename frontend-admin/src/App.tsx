@@ -234,6 +234,18 @@ function AdminApp() {
     }
   };
 
+  const permanentlyDeleteProject = async (project: Project) => {
+    const approved = window.confirm("למחוק את הפרויקט '" + project.name + "' לצמיתות? כל אנשי הקשר, הסטטוסים, הערות הטלפנים והיסטוריית השיחות של פרויקט זה יימחקו ללא אפשרות שחזור!");
+    if (!approved) return;
+    setLoading(true);
+    try {
+      await fetch(API_URL + "/api/projects/" + project.id + "/permanent", { method: "DELETE", headers: getAdminHeaders() });
+      fetchData();
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const seedDemo = async () => { setLoading(true); try { await fetch(API_URL + "/api/contacts/seed", { method: "POST", headers: getAdminHeaders() }); fetchData(); } finally { setLoading(false); } };
 
   const csvExportUrl = (project: Project) => API_URL + "/api/projects/" + project.id + "/export.csv?passcode=" + encodeURIComponent(sessionStorage.getItem("admin_passcode") || passcode);
@@ -421,7 +433,7 @@ function AdminApp() {
                 </section>
               ))}
             </div>
-            {archivedProjects.length > 0 && <section className="archived-projects-card"><div className="table-card-header"><h2>ארכיון פרויקטים</h2><span>הנתונים נשמרים ואפשר לשחזר בכל רגע</span></div>{archivedProjects.map((project) => <div className="archived-project-row" key={project.id}><div><strong>{project.name}</strong><span>{project.stats.total} רשומות · {project.stats.totalCalled} שיחות שבוצעו</span></div><div className="sheet-actions"><a href={xlsxExportUrl(project)} target="_blank" rel="noreferrer">הורד גיבוי XLSX</a><button type="button" onClick={() => restoreProject(project)} disabled={loading}>שחזר</button></div></div>)}</section>}
+            {archivedProjects.length > 0 && <section className="archived-projects-card"><div className="table-card-header"><h2>ארכיון פרויקטים</h2><span>הנתונים נשמרים ואפשר לשחזר בכל רגע</span></div>{archivedProjects.map((project) => <div className="archived-project-row" key={project.id}><div><strong>{project.name}</strong><span>{project.stats.total} רשומות · {project.stats.totalCalled} שיחות שבוצעו</span></div><div className="sheet-actions"><a href={xlsxExportUrl(project)} target="_blank" rel="noreferrer">הורד גיבוי XLSX</a><button type="button" onClick={() => restoreProject(project)} disabled={loading}>שחזר</button><button type="button" className="danger-button" onClick={() => permanentlyDeleteProject(project)} disabled={loading}>מחק לצמיתות</button></div></div>)}</section>}
           </div>
         )}
         {activeTab === "settings" && (

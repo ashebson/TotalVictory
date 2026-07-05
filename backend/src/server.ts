@@ -25,6 +25,45 @@ const io = new Server(server, {
 
 app.use(cors());
 
+// --- Security Headers Middleware ---
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-XSS-Protection", "1; mode=block");
+  res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  next();
+});
+
+// --- In-Memory Rate Limiting System ---
+const ipRequestCounts = new Map<string, { count: number; resetTime: number }>();
+function rateLimiter(limit: number, windowMs: number) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const rawIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown";
+    const ip = Array.isArray(rawIp) ? rawIp[0] : String(rawIp).split(",")[0].trim();
+    const now = Date.now();
+    let rateData = ipRequestCounts.get(ip);
+    if (!rateData || now > rateData.resetTime) {
+      rateData = { count: 0, resetTime: now + windowMs };
+    }
+    rateData.count++;
+    ipRequestCounts.set(ip, rateData);
+    if (rateData.count > limit) {
+      return res.status(429).json({ error: "Too many requests, please try again later." });
+    }
+    next();
+  };
+}
+
+// Clean expired rate-limit entries every minute
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, rateData] of ipRequestCounts.entries()) {
+    if (now > rateData.resetTime) {
+      ipRequestCounts.delete(ip);
+    }
+  }
+}, 60_000);
+
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 type Project = { id: number; adminId: number; name: string; sourceFileName?: string | null; sourceHeaders?: string[]; createdAt: Date };
@@ -1264,7 +1303,7 @@ function buildPasscodeWhatsAppUrl(admin: any) {
 
 io.on("connection", (socket) => { console.log("Client connected:", socket.id); socket.on("disconnect", () => console.log("Client disconnected:", socket.id)); });
 
-app.post("/api/login", async (req, res) => {
+app.post("/api/login", rateLimiter(20, 60000), async (req, res) => {
   try {
     const { name, phone } = req.body;
     const joinProjectId = Number(req.body.projectId || 0);
@@ -1297,7 +1336,7 @@ app.post("/api/login", async (req, res) => {
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
-app.post("/api/admins/validate", async (req, res) => {
+app.post("/api/admins/validate", rateLimiter(20, 60000), async (req, res) => {
   try {
     const passcode = String(req.body.passcode || "");
     if (passcode === "halevi2026") return res.json({ success: true, admin: { id: 0, fullName: "מנהל ראשי", planId: "legacy" } });
@@ -1316,7 +1355,7 @@ app.get("/api/subscriptions/plans", (_req, res) => {
   ]);
 });
 
-app.post("/api/admins/register", async (req, res) => {
+app.post("/api/admins/register", rateLimiter(5, 60000), async (req, res) => {
   try {
     const fullName = String(req.body.fullName || "").trim();
     const email = String(req.body.email || "").trim().toLowerCase();

@@ -87,10 +87,11 @@ model CallLog {
 }
 
 model Setting {
-  adminId Int    @default(1)
-  admin   Admin  @relation(fields: [adminId], references: [id], onDelete: Cascade)
-  key     String
-  value   String
+  adminId   Int      @default(1)
+  admin     Admin    @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  key       String
+  value     String
+  updatedAt DateTime @updatedAt @default(now())
 
   @@id([adminId, key])
 }

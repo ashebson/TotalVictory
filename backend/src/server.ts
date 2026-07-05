@@ -35,6 +35,56 @@ type Store = { projects: Project[]; callers: Caller[]; contacts: Contact[]; call
 
 const memory: Store = { projects: [], callers: [], contacts: [], callerProjects: [], callLogs: [], settings: [], admins: [], subscriptions: [], ids: { project: 1, caller: 1, contact: 1, callLog: 1, admin: 1, subscription: 1 } };
 
+// --- Settings Cache (DB-First with Delta Sync) ---
+const settingsCache = new Map<string, string>();
+let settingsCacheLastSync = new Date(0);
+const SETTINGS_SYNC_INTERVAL_MS = 10_000;
+
+async function syncSettingsCache() {
+  if (!prisma) return;
+  try {
+    const updated = await prisma.setting.findMany({
+      where: { updatedAt: { gt: settingsCacheLastSync } },
+    });
+    const now = new Date();
+    for (const s of updated) {
+      settingsCache.set(`${s.adminId}_${s.key}`, s.value);
+    }
+    settingsCacheLastSync = now;
+  } catch (err) {
+    console.error('Settings cache sync error:', err);
+  }
+}
+
+function startSettingsCacheSync() {
+  if (!prisma) return;
+  syncSettingsCache();
+  setInterval(syncSettingsCache, SETTINGS_SYNC_INTERVAL_MS);
+}
+
+// --- Stats Cache (15s TTL) ---
+const statsCache = new Map<string, { data: any; expiresAt: number }>();
+const STATS_CACHE_TTL_MS = 15_000;
+
+function getCachedStats(key: string): any | null {
+  const entry = statsCache.get(key);
+  if (entry && Date.now() < entry.expiresAt) return entry.data;
+  return null;
+}
+
+function setCachedStats(key: string, data: any) {
+  statsCache.set(key, { data, expiresAt: Date.now() + STATS_CACHE_TTL_MS });
+}
+
+function invalidateStatsCache(adminId?: number) {
+  if (adminId !== undefined) {
+    statsCache.delete(`admin_${adminId}`);
+    statsCache.delete(`tv_${adminId}`);
+  } else {
+    statsCache.clear();
+  }
+}
+
 let contactAllocationQueue = Promise.resolve();
 function enqueueContactAllocation<T>(work: () => T | Promise<T>) {
   const result = contactAllocationQueue.then(work, work);
@@ -61,6 +111,12 @@ function cleanPhone(phone: unknown) { return String(phone || "").replace(/\D/g, 
 function normalizeHeader(value: string) { return value.trim().replace(/^"|"$/g, "").toLowerCase(); }
 
 function settingValue(adminId: number, key: string, fallback: string) {
+  if (prisma) {
+    const cached = settingsCache.get(`${adminId}_${key}`);
+    if (cached !== undefined) return cached;
+    const defaultValue = defaultSettings.find((item) => item.key === key)?.value || fallback;
+    return defaultValue;
+  }
   let setting = memory.settings.find((item) => item.adminId === adminId && item.key === key);
   if (!setting) {
     const defaultValue = defaultSettings.find((item) => item.key === key)?.value || fallback;
@@ -99,17 +155,34 @@ function archivedProjectIds(adminId: number) {
 }
 
 function isProjectArchived(projectId: number) {
+  if (prisma) {
+    for (const [cacheKey, cacheValue] of settingsCache) {
+      if (cacheKey.endsWith("_archived_project_ids")) {
+        try {
+          const list = JSON.parse(cacheValue);
+          if (Array.isArray(list) && list.map(Number).includes(projectId)) {
+            return true;
+          }
+        } catch {}
+      }
+    }
+    return false;
+  }
   const project = memory.projects.find((p) => p.id === projectId);
   if (!project) return false;
   return archivedProjectIds(project.adminId).includes(projectId);
 }
 
-function setProjectArchived(adminId: number, projectId: number, archived: boolean) {
+async function setProjectArchived(adminId: number, projectId: number, archived: boolean) {
   const ids = new Set(archivedProjectIds(adminId));
   if (archived) ids.add(projectId); else ids.delete(projectId);
   const value = JSON.stringify([...ids]);
-  let existing = memory.settings.find((item) => item.adminId === adminId && item.key === "archived_project_ids");
-  if (existing) existing.value = value; else memory.settings.push({ adminId, key: "archived_project_ids", value });
+  if (prisma) {
+    await persistSetting(adminId, "archived_project_ids", value);
+  } else {
+    let existing = memory.settings.find((item) => item.adminId === adminId && item.key === "archived_project_ids");
+    if (existing) existing.value = value; else memory.settings.push({ adminId, key: "archived_project_ids", value });
+  }
 }
 
 function activeContacts(adminId?: number) {
@@ -220,7 +293,7 @@ function authenticateOwner(req: express.Request, res: express.Response, next: ex
   next();
 }
 
-function authenticateAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+async function authenticateAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
   const authHeader = req.headers.authorization;
   const customHeader = req.headers["x-admin-passcode"];
   const queryPasscode = req.query.passcode;
@@ -238,7 +311,9 @@ function authenticateAdmin(req: express.Request, res: express.Response, next: ex
     return next();
   }
   
-  const admin = memory.admins.find((item) => item.passcode === passcode && item.status === "ACTIVE");
+  const admin = prisma
+    ? await prisma.admin.findFirst({ where: { passcode, status: "ACTIVE" } })
+    : memory.admins.find((item) => item.passcode === passcode && item.status === "ACTIVE");
   if (!admin) {
     return res.status(401).json({ error: "Invalid or inactive admin passcode" });
   }
@@ -247,7 +322,7 @@ function authenticateAdmin(req: express.Request, res: express.Response, next: ex
   next();
 }
 
-function authenticateCaller(req: express.Request, res: express.Response, next: express.NextFunction) {
+async function authenticateCaller(req: express.Request, res: express.Response, next: express.NextFunction) {
   const phoneHeader = req.headers["x-caller-phone"];
   const callerIdQuery = req.query.callerId || req.body.callerId;
   const callerIdParam = req.params.callerId;
@@ -257,7 +332,9 @@ function authenticateCaller(req: express.Request, res: express.Response, next: e
   }
   
   const normalizedPhone = cleanPhone(phoneHeader);
-  const caller = memory.callers.find((item) => item.phone === normalizedPhone);
+  const caller = prisma
+    ? await prisma.caller.findFirst({ where: { phone: normalizedPhone } })
+    : memory.callers.find((item) => item.phone === normalizedPhone);
   if (!caller) {
     return res.status(401).json({ error: "Caller phone not registered" });
   }
@@ -504,10 +581,17 @@ function csvEscape(value: unknown) {
   return /[",\n\r]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
 }
 
-function projectExportRows(projectId: number) {
-  const project = memory.projects.find((item) => item.id === projectId);
+async function projectExportRows(projectId: number) {
+  let project: any;
+  let projectContacts: any[];
+  if (prisma) {
+    project = await prisma.project.findUnique({ where: { id: projectId } });
+    projectContacts = await prisma.contact.findMany({ where: { projectId }, orderBy: { id: "asc" } });
+  } else {
+    project = memory.projects.find((item) => item.id === projectId);
+    projectContacts = memory.contacts.filter((contact) => contact.projectId === projectId).sort((a, b) => a.id - b.id);
+  }
   const adminId = project ? project.adminId : 1;
-  const projectContacts = memory.contacts.filter((contact) => contact.projectId === projectId).sort((a, b) => a.id - b.id);
   const originalHeaders = Array.from(new Set([
     ...(project?.sourceHeaders || []),
     ...projectContacts.flatMap((contact) => Object.keys(contact.sourceData || {})),
@@ -523,19 +607,19 @@ function projectExportRows(projectId: number) {
       ...originalValues,
       exportStatusLabel(adminId, contact.status),
       contact.callNotes || "",
-      contact.lastCalledAt ? contact.lastCalledAt.toLocaleDateString("he-IL") : "",
+      contact.lastCalledAt ? new Date(contact.lastCalledAt).toLocaleDateString("he-IL") : "",
     ];
   });
   return { headers, rows };
 }
 
-function projectExportCsv(projectId: number) {
-  const { headers, rows } = projectExportRows(projectId);
+async function projectExportCsv(projectId: number) {
+  const { headers, rows } = await projectExportRows(projectId);
   return [headers, ...rows].map((row) => row.map(csvEscape).join(",")).join("\n");
 }
 
-function projectExportXlsx(projectId: number) {
-  const { headers, rows } = projectExportRows(projectId);
+async function projectExportXlsx(projectId: number) {
+  const { headers, rows } = await projectExportRows(projectId);
   const workbook = XLSX.utils.book_new();
   const table = [headers, ...rows].map((row) => row.map((value) => String(value ?? "")));
   const worksheet = XLSX.utils.aoa_to_sheet(table);
@@ -571,7 +655,28 @@ function parseUploadedContacts(payload: any) {
   return enforceUploadContactLimit(contacts);
 }
 
-function projectStats(projectId: number) {
+async function projectStatsFromDb(projectId: number) {
+  if (!prisma) return projectStatsFromMemory(projectId);
+  const groups = await prisma.contact.groupBy({
+    by: ["status"],
+    where: { projectId },
+    _count: true,
+  });
+  const counts: Record<string, number> = {};
+  let total = 0;
+  for (const g of groups) { counts[g.status] = g._count; total += g._count; }
+  return {
+    total,
+    pending: counts["PENDING"] || 0,
+    success: counts["SUCCESS"] || 0,
+    notInterested: counts["NOT_INTERESTED"] || 0,
+    noAnswer: counts["NO_ANSWER"] || 0,
+    invalidNumber: counts["INVALID_NUMBER"] || 0,
+    totalCalled: total - (counts["PENDING"] || 0),
+  };
+}
+
+function projectStatsFromMemory(projectId: number) {
   const projectContacts = memory.contacts.filter((contact) => contact.projectId === projectId);
   return {
     total: projectContacts.length,
@@ -584,7 +689,36 @@ function projectStats(projectId: number) {
   };
 }
 
-function allStats(adminId: number) {
+function projectStats(projectId: number) {
+  return projectStatsFromMemory(projectId);
+}
+
+async function allStatsFromDb(adminId: number) {
+  if (!prisma) return allStatsFromMemory(adminId);
+  const archivedIds = archivedProjectIds(adminId);
+  const groups = await prisma.contact.groupBy({
+    by: ["status"],
+    where: {
+      project: { adminId },
+      projectId: archivedIds.length ? { notIn: archivedIds } : undefined,
+    },
+    _count: true,
+  });
+  const counts: Record<string, number> = {};
+  let total = 0;
+  for (const g of groups) { counts[g.status] = g._count; total += g._count; }
+  return {
+    total,
+    pending: counts["PENDING"] || 0,
+    success: counts["SUCCESS"] || 0,
+    notInterested: counts["NOT_INTERESTED"] || 0,
+    noAnswer: counts["NO_ANSWER"] || 0,
+    invalidNumber: counts["INVALID_NUMBER"] || 0,
+    totalCalled: total - (counts["PENDING"] || 0),
+  };
+}
+
+function allStatsFromMemory(adminId: number) {
   const contacts = activeContacts(adminId);
   return {
     total: contacts.length,
@@ -597,44 +731,103 @@ function allStats(adminId: number) {
   };
 }
 
-function tvStats(adminId: number = 1) {
-  const stats = allStats(adminId);
-  const getSetting = (key: string, fallback: string) => settingValue(adminId, key, fallback);
-  const leaderboard = memory.callers
-    .filter((caller) => caller.adminId === adminId)
-    .map((caller) => {
-      const logs = memory.callLogs.filter((log) => log.callerId === caller.id);
-      const successLogs = logs.filter((log) => log.status === "SUCCESS");
-      return {
-        id: caller.id,
-        name: caller.name,
-        totalCalls: logs.length,
-        successCalls: successLogs.length,
-        successRate: logs.length ? Math.round((successLogs.length / logs.length) * 100) : 0,
-      };
-    })
-    .filter((caller) => caller.totalCalls > 0)
-    .sort((a, b) => b.successCalls - a.successCalls || b.totalCalls - a.totalCalls)
-    .slice(0, 10);
+function allStats(adminId: number) {
+  return allStatsFromMemory(adminId);
+}
 
-  const recentCalls = [...memory.callLogs]
-    .filter((log) => {
-      const project = memory.projects.find((p) => p.id === log.projectId);
-      return project && project.adminId === adminId;
-    })
-    .sort((a, b) => Number(b.timestamp) - Number(a.timestamp))
-    .slice(0, 10)
-    .map((log) => {
-      const caller = memory.callers.find((item) => item.id === log.callerId);
-      const contact = memory.contacts.find((item) => item.id === log.contactId);
-      return {
-        id: log.id,
-        callerName: caller?.name || "טלפן",
-        contactName: contact?.name || "איש קשר",
-        status: log.status,
-        timestamp: log.timestamp,
-      };
+async function tvStats(adminId: number = 1) {
+  const stats = await allStatsFromDb(adminId);
+  const getSetting = (key: string, fallback: string) => settingValue(adminId, key, fallback);
+
+  let leaderboard: any[];
+  let recentCalls: any[];
+
+  if (prisma) {
+    const callerStats = await prisma.callLog.groupBy({
+      by: ["callerId"],
+      where: { project: { adminId } },
+      _count: true,
     });
+    const successStats = await prisma.callLog.groupBy({
+      by: ["callerId"],
+      where: { project: { adminId }, status: "SUCCESS" },
+      _count: true,
+    });
+    const successMap = new Map(successStats.map((s) => [s.callerId, s._count]));
+    const callerIds = callerStats.filter((c) => c._count > 0).map((c) => c.callerId);
+    const callerRecords = await prisma.caller.findMany({ where: { id: { in: callerIds } } });
+    const callerMap = new Map(callerRecords.map((c) => [c.id, c]));
+    leaderboard = callerStats
+      .filter((c) => c._count > 0)
+      .map((c) => {
+        const caller = callerMap.get(c.callerId);
+        const successCount = successMap.get(c.callerId) || 0;
+        return {
+          id: c.callerId,
+          name: caller?.name || "טלפן",
+          totalCalls: c._count,
+          successCalls: successCount,
+          successRate: c._count ? Math.round((successCount / c._count) * 100) : 0,
+        };
+      })
+      .sort((a, b) => b.successCalls - a.successCalls || b.totalCalls - a.totalCalls)
+      .slice(0, 10);
+
+    const recentLogs = await prisma.callLog.findMany({
+      where: { project: { adminId } },
+      orderBy: { timestamp: "desc" },
+      take: 10,
+      include: { caller: true, contact: true },
+    });
+    recentCalls = recentLogs.map((log) => ({
+      id: log.id,
+      callerName: log.caller?.name || "טלפן",
+      contactName: log.contact?.name || "איש קשר",
+      status: log.status,
+      timestamp: log.timestamp,
+    }));
+  } else {
+    leaderboard = memory.callers
+      .filter((caller) => caller.adminId === adminId)
+      .map((caller) => {
+        const logs = memory.callLogs.filter((log) => log.callerId === caller.id);
+        const successLogs = logs.filter((log) => log.status === "SUCCESS");
+        return {
+          id: caller.id,
+          name: caller.name,
+          totalCalls: logs.length,
+          successCalls: successLogs.length,
+          successRate: logs.length ? Math.round((successLogs.length / logs.length) * 100) : 0,
+        };
+      })
+      .filter((caller) => caller.totalCalls > 0)
+      .sort((a, b) => b.successCalls - a.successCalls || b.totalCalls - a.totalCalls)
+      .slice(0, 10);
+
+    recentCalls = [...memory.callLogs]
+      .filter((log) => {
+        const project = memory.projects.find((p) => p.id === log.projectId);
+        return project && project.adminId === adminId;
+      })
+      .sort((a, b) => Number(b.timestamp) - Number(a.timestamp))
+      .slice(0, 10)
+      .map((log) => {
+        const caller = memory.callers.find((item) => item.id === log.callerId);
+        const contact = memory.contacts.find((item) => item.id === log.contactId);
+        return {
+          id: log.id,
+          callerName: caller?.name || "טלפן",
+          contactName: contact?.name || "איש קשר",
+          status: log.status,
+          timestamp: log.timestamp,
+        };
+      });
+  }
+
+  const projects = prisma
+    ? (await prisma.project.findMany({ where: { adminId } })).filter((p) => !archivedProjectIds(adminId).includes(p.id))
+    : activeProjects(adminId);
+  const serialized = await Promise.all(projects.map((p) => serializeProjectAsync(p)));
 
   return {
     ...stats,
@@ -645,13 +838,22 @@ function tvStats(adminId: number = 1) {
     recentCalls,
     targetCalls: Number.parseInt(getSetting("target_calls", "5000"), 10) || 5000,
     campaignName: getSetting("campaign_name", "מטה טלפנים דיגיטלי"),
-    projects: activeProjects(adminId).map(serializeProject),
+    projects: serialized,
   };
 }
 
 function serializeProject(project: Project) {
   const callerIds = memory.callerProjects.filter((link) => link.projectId === project.id).map((link) => link.callerId);
   return { ...project, archived: isProjectArchived(project.id), stats: projectStats(project.id), callers: memory.callers.filter((caller) => callerIds.includes(caller.id)) };
+}
+
+async function serializeProjectAsync(project: any) {
+  if (!prisma) return serializeProject(project as Project);
+  const callerProjectLinks = await prisma.callerProject.findMany({ where: { projectId: project.id } });
+  const callerIds = callerProjectLinks.map((l) => l.callerId);
+  const callers = callerIds.length ? await prisma.caller.findMany({ where: { id: { in: callerIds } } }) : [];
+  const stats = await projectStatsFromDb(project.id);
+  return { ...project, archived: isProjectArchived(project.id), stats, callers };
 }
 
 function getCallerProjects(callerId: number) {
@@ -661,6 +863,26 @@ function getCallerProjects(callerId: number) {
 
 function nextId(items: { id: number }[]) {
   return items.reduce((max, item) => Math.max(max, Number(item.id) || 0), 0) + 1;
+}
+
+async function initIdsFromDb() {
+  if (!prisma) return;
+  const [maxProject, maxCaller, maxContact, maxCallLog, maxAdmin, maxSubscription] = await Promise.all([
+    prisma.project.aggregate({ _max: { id: true } }),
+    prisma.caller.aggregate({ _max: { id: true } }),
+    prisma.contact.aggregate({ _max: { id: true } }),
+    prisma.callLog.aggregate({ _max: { id: true } }),
+    prisma.admin.aggregate({ _max: { id: true } }),
+    prisma.subscription.aggregate({ _max: { id: true } }),
+  ]);
+  memory.ids = {
+    project: (maxProject._max.id || 0) + 1,
+    caller: (maxCaller._max.id || 0) + 1,
+    contact: (maxContact._max.id || 0) + 1,
+    callLog: (maxCallLog._max.id || 0) + 1,
+    admin: (maxAdmin._max.id || 0) + 1,
+    subscription: (maxSubscription._max.id || 0) + 1,
+  };
 }
 
 async function loadPrismaStore() {
@@ -713,6 +935,7 @@ function callLogDbData(item: CallLog) {
 
 async function persistSetting(adminId: number, key: string, value: string) {
   if (!prisma) return saveMemoryStore();
+  settingsCache.set(`${adminId}_${key}`, value);
   await prisma.setting.upsert({
     where: { adminId_key: { adminId, key } },
     update: { value },
@@ -829,6 +1052,11 @@ async function initSettings() {
         create: { adminId: 1, key: item.key, value: item.value }
       });
     }
+    const allSettings = await prisma.setting.findMany();
+    for (const s of allSettings) {
+      settingsCache.set(`${s.adminId}_${s.key}`, s.value);
+    }
+    settingsCacheLastSync = new Date();
     return;
   }
   for (const item of defaultSettings) {
@@ -838,7 +1066,7 @@ async function initSettings() {
   }
 }
 
-async function broadcastStatsUpdate(adminId: number = 1) { io.emit("stats-update", tvStats(adminId)); }
+async function broadcastStatsUpdate(adminId: number = 1) { invalidateStatsCache(adminId); io.emit("stats-update", await tvStats(adminId)); }
 
 function ensureCaller(name: string | undefined, phone: string, adminId: number) {
   const trimmed = String(name || "").trim();
@@ -982,7 +1210,7 @@ function ownerAdminRegistration(admin: any) {
 
 async function ownerAdminRegistrations() {
   if (prisma) {
-    const admins = await prisma.admin.findMany({ orderBy: { createdAt: "desc" }, include: { subscriptions: true } });
+    const admins = await prisma.admin.findMany({ orderBy: { createdAt: "desc" }, include: { subscriptions: true }, take: 100 });
     return admins.map((admin: any) => {
       const subscriptions = [...(admin.subscriptions || [])].sort((a, b) => Number(new Date(a.createdAt || 0)) - Number(new Date(b.createdAt || 0)));
       return {
@@ -1046,11 +1274,15 @@ app.post("/api/login", async (req, res) => {
     
     let adminId = 1;
     if (joinProjectId) {
-      const project = memory.projects.find((item) => item.id === joinProjectId);
+      const project = prisma
+        ? await prisma.project.findUnique({ where: { id: joinProjectId } })
+        : memory.projects.find((item) => item.id === joinProjectId);
       if (!project || isProjectArchived(joinProjectId)) return res.status(404).json({ error: "Project not found" });
       adminId = project.adminId;
     } else {
-      const existing = memory.callers.find((c) => c.phone === normalizedPhone);
+      const existing = prisma
+        ? await prisma.caller.findFirst({ where: { phone: normalizedPhone } })
+        : memory.callers.find((c) => c.phone === normalizedPhone);
       if (existing) adminId = existing.adminId;
     }
 
@@ -1065,12 +1297,16 @@ app.post("/api/login", async (req, res) => {
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
-app.post("/api/admins/validate", (req, res) => {
-  const passcode = String(req.body.passcode || "");
-  if (passcode === "halevi2026") return res.json({ success: true, admin: { id: 0, fullName: "מנהל ראשי", planId: "legacy" } });
-  const admin = memory.admins.find((item) => item.passcode === passcode && item.status === "ACTIVE");
-  if (!admin) return res.status(401).json({ success: false, error: "Invalid passcode" });
-  res.json({ success: true, admin: publicAdmin(admin) });
+app.post("/api/admins/validate", async (req, res) => {
+  try {
+    const passcode = String(req.body.passcode || "");
+    if (passcode === "halevi2026") return res.json({ success: true, admin: { id: 0, fullName: "מנהל ראשי", planId: "legacy" } });
+    const admin = prisma
+      ? await prisma.admin.findFirst({ where: { passcode, status: "ACTIVE" } })
+      : memory.admins.find((item) => item.passcode === passcode && item.status === "ACTIVE");
+    if (!admin) return res.status(401).json({ success: false, error: "Invalid passcode" });
+    res.json({ success: true, admin: publicAdmin(admin) });
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
 app.get("/api/subscriptions/plans", (_req, res) => {
@@ -1162,12 +1398,39 @@ app.post("/api/admins/:adminId/approve", authenticateOwner, async (req, res) => 
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
-app.get("/api/callers", authenticateAdmin, (req, res) => {
-  const adminId = (req as any).adminId;
-  const callers = memory.callers.filter((caller) => caller.adminId === adminId);
-  res.json(callers.map((caller) => ({ ...caller, projects: getCallerProjects(caller.id) })));
+app.get("/api/callers", authenticateAdmin, async (req, res) => {
+  try {
+    const adminId = (req as any).adminId;
+    if (prisma) {
+      const callers = await prisma.caller.findMany({ where: { adminId }, take: 200 });
+      const result = await Promise.all(callers.map(async (caller) => {
+        const links = await prisma!.callerProject.findMany({ where: { callerId: caller.id } });
+        const projectIds = links.map((l) => l.projectId);
+        const projects = projectIds.length ? await prisma!.project.findMany({ where: { id: { in: projectIds } } }) : [];
+        const activeCallerProjects = projects.filter((p) => !archivedProjectIds(adminId).includes(p.id));
+        const serialized = await Promise.all(activeCallerProjects.map((p) => serializeProjectAsync(p)));
+        return { ...caller, projects: serialized };
+      }));
+      return res.json(result);
+    }
+    const callers = memory.callers.filter((caller) => caller.adminId === adminId);
+    res.json(callers.map((caller) => ({ ...caller, projects: getCallerProjects(caller.id) })));
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
-app.get("/api/callers/:callerId/projects", authenticateCaller, (req, res) => res.json(getCallerProjects(Number(req.params.callerId))));
+app.get("/api/callers/:callerId/projects", authenticateCaller, async (req, res) => {
+  try {
+    const callerId = Number(req.params.callerId);
+    if (prisma) {
+      const links = await prisma.callerProject.findMany({ where: { callerId } });
+      const projectIds = links.map((l) => l.projectId);
+      const projects = projectIds.length ? await prisma.project.findMany({ where: { id: { in: projectIds } } }) : [];
+      const activeCallerProjects = projects.filter((p) => !isProjectArchived(p.id));
+      const serialized = await Promise.all(activeCallerProjects.map((p) => serializeProjectAsync(p)));
+      return res.json(serialized);
+    }
+    res.json(getCallerProjects(callerId));
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
+});
 
 app.post("/api/callers/:callerId/settings", authenticateCaller, async (req, res) => {
   try {
@@ -1180,9 +1443,16 @@ app.post("/api/callers/:callerId/settings", authenticateCaller, async (req, res)
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
-app.get("/api/projects", authenticateAdmin, (req, res) => {
-  const adminId = (req as any).adminId;
-  res.json(memory.projects.filter((project) => project.adminId === adminId).map(serializeProject));
+app.get("/api/projects", authenticateAdmin, async (req, res) => {
+  try {
+    const adminId = (req as any).adminId;
+    if (prisma) {
+      const projects = await prisma.project.findMany({ where: { adminId }, take: 100 });
+      const serialized = await Promise.all(projects.map((p) => serializeProjectAsync(p)));
+      return res.json(serialized);
+    }
+    res.json(memory.projects.filter((project) => project.adminId === adminId).map(serializeProject));
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
 app.post("/api/projects/upload", authenticateAdmin, async (req, res) => {
@@ -1201,75 +1471,96 @@ app.post("/api/projects/upload", authenticateAdmin, async (req, res) => {
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
-app.get("/api/projects/:projectId/export.csv", authenticateAdmin, (req, res) => {
-  const adminId = (req as any).adminId;
-  const projectId = Number(req.params.projectId);
-  const project = memory.projects.find((item) => item.id === projectId && item.adminId === adminId);
-  if (!project) return res.status(404).send("Project not found");
-  res.setHeader("Content-Type", "text/csv; charset=utf-8");
-  res.setHeader("Content-Disposition", "inline; filename=project-" + projectId + ".csv");
-  res.send("\uFEFF" + projectExportCsv(projectId));
+app.get("/api/projects/:projectId/export.csv", authenticateAdmin, async (req, res) => {
+  try {
+    const adminId = (req as any).adminId;
+    const projectId = Number(req.params.projectId);
+    const project = prisma
+      ? await prisma.project.findFirst({ where: { id: projectId, adminId } })
+      : memory.projects.find((item) => item.id === projectId && item.adminId === adminId);
+    if (!project) return res.status(404).send("Project not found");
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", "inline; filename=project-" + projectId + ".csv");
+    res.send("\uFEFF" + await projectExportCsv(projectId));
+  } catch (error: any) { res.status(500).send(error.message); }
 });
 
-app.get("/api/projects/:projectId/export.xlsx", authenticateAdmin, (req, res) => {
-  const adminId = (req as any).adminId;
-  const projectId = Number(req.params.projectId);
-  const project = memory.projects.find((item) => item.id === projectId && item.adminId === adminId);
-  if (!project) return res.status(404).send("Project not found");
-  const workbook = projectExportXlsx(projectId);
-  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-  res.setHeader("Content-Disposition", "attachment; filename=project-" + projectId + ".xlsx");
-  res.send(workbook);
+app.get("/api/projects/:projectId/export.xlsx", authenticateAdmin, async (req, res) => {
+  try {
+    const adminId = (req as any).adminId;
+    const projectId = Number(req.params.projectId);
+    const project = prisma
+      ? await prisma.project.findFirst({ where: { id: projectId, adminId } })
+      : memory.projects.find((item) => item.id === projectId && item.adminId === adminId);
+    if (!project) return res.status(404).send("Project not found");
+    const workbook = await projectExportXlsx(projectId);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", "attachment; filename=project-" + projectId + ".xlsx");
+    res.send(workbook);
+  } catch (error: any) { res.status(500).send(error.message); }
 });
 
 app.delete("/api/projects/:projectId", authenticateAdmin, async (req, res) => {
-  const adminId = (req as any).adminId;
-  const projectId = Number(req.params.projectId);
-  const project = memory.projects.find((item) => item.id === projectId && item.adminId === adminId);
-  if (!project) return res.status(404).json({ error: "Project not found" });
-  setProjectArchived(adminId, projectId, true);
-  await persistSettingsOnly();
-  broadcastStatsUpdate(adminId);
-  res.json({ success: true, archived: true, project: serializeProject(project) });
+  try {
+    const adminId = (req as any).adminId;
+    const projectId = Number(req.params.projectId);
+    const project = prisma
+      ? await prisma.project.findFirst({ where: { id: projectId, adminId } })
+      : memory.projects.find((item) => item.id === projectId && item.adminId === adminId);
+    if (!project) return res.status(404).json({ error: "Project not found" });
+    await setProjectArchived(adminId, projectId, true);
+    if (!prisma) await persistSettingsOnly();
+    broadcastStatsUpdate(adminId);
+    res.json({ success: true, archived: true, project: await serializeProjectAsync(project) });
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
 app.post("/api/projects/:projectId/restore", authenticateAdmin, async (req, res) => {
-  const adminId = (req as any).adminId;
-  const projectId = Number(req.params.projectId);
-  const project = memory.projects.find((item) => item.id === projectId && item.adminId === adminId);
-  if (!project) return res.status(404).json({ error: "Project not found" });
-  setProjectArchived(adminId, projectId, false);
-  await persistSettingsOnly();
-  broadcastStatsUpdate(adminId);
-  res.json({ success: true, archived: false, project: serializeProject(project) });
+  try {
+    const adminId = (req as any).adminId;
+    const projectId = Number(req.params.projectId);
+    const project = prisma
+      ? await prisma.project.findFirst({ where: { id: projectId, adminId } })
+      : memory.projects.find((item) => item.id === projectId && item.adminId === adminId);
+    if (!project) return res.status(404).json({ error: "Project not found" });
+    await setProjectArchived(adminId, projectId, false);
+    if (!prisma) await persistSettingsOnly();
+    broadcastStatsUpdate(adminId);
+    res.json({ success: true, archived: false, project: await serializeProjectAsync(project) });
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
 app.delete("/api/projects/:projectId/permanent", authenticateAdmin, async (req, res) => {
   try {
     const adminId = (req as any).adminId;
     const projectId = Number(req.params.projectId);
-    const project = memory.projects.find((item) => item.id === projectId && item.adminId === adminId);
+    const project = prisma
+      ? await prisma.project.findFirst({ where: { id: projectId, adminId } })
+      : memory.projects.find((item) => item.id === projectId && item.adminId === adminId);
     if (!project) return res.status(404).json({ error: "Project not found" });
 
     if (prisma) {
       await prisma.project.delete({ where: { id: projectId } });
-    }
-
-    memory.projects = memory.projects.filter((p) => p.id !== projectId);
-    memory.contacts = memory.contacts.filter((c) => c.projectId !== projectId);
-    memory.callerProjects = memory.callerProjects.filter((l) => l.projectId !== projectId);
-    memory.callLogs = memory.callLogs.filter((l) => l.projectId !== projectId);
-
-    const ids = new Set(archivedProjectIds(adminId));
-    ids.delete(projectId);
-    const value = JSON.stringify([...ids]);
-    let existing = memory.settings.find((item) => item.adminId === adminId && item.key === "archived_project_ids");
-    if (existing) {
-      existing.value = value;
+      const ids = new Set(archivedProjectIds(adminId));
+      ids.delete(projectId);
+      await persistSetting(adminId, "archived_project_ids", JSON.stringify([...ids]));
     } else {
-      memory.settings.push({ adminId, key: "archived_project_ids", value });
+      memory.projects = memory.projects.filter((p) => p.id !== projectId);
+      memory.contacts = memory.contacts.filter((c) => c.projectId !== projectId);
+      memory.callerProjects = memory.callerProjects.filter((l) => l.projectId !== projectId);
+      memory.callLogs = memory.callLogs.filter((l) => l.projectId !== projectId);
+
+      const ids = new Set(archivedProjectIds(adminId));
+      ids.delete(projectId);
+      const value = JSON.stringify([...ids]);
+      let existing = memory.settings.find((item) => item.adminId === adminId && item.key === "archived_project_ids");
+      if (existing) {
+        existing.value = value;
+      } else {
+        memory.settings.push({ adminId, key: "archived_project_ids", value });
+      }
+      await persistSettingsOnly();
     }
-    await persistSettingsOnly();
 
     broadcastStatsUpdate(adminId);
     res.json({ success: true });
@@ -1282,7 +1573,9 @@ app.post("/api/projects/:projectId/callers", authenticateAdmin, async (req, res)
   try {
     const adminId = (req as any).adminId;
     const projectId = Number(req.params.projectId);
-    const project = memory.projects.find((item) => item.id === projectId && item.adminId === adminId);
+    const project = prisma
+      ? await prisma.project.findFirst({ where: { id: projectId, adminId } })
+      : memory.projects.find((item) => item.id === projectId && item.adminId === adminId);
     if (!project) return res.status(404).json({ error: "Project not found" });
     const phone = cleanPhone(req.body.phone);
     if (phone.length < 9) return res.status(400).json({ error: "Valid caller phone is required" });
@@ -1291,20 +1584,28 @@ app.post("/api/projects/:projectId/callers", authenticateAdmin, async (req, res)
     await persistCaller(caller);
     await persistCallerProject(caller.id, projectId);
     broadcastStatsUpdate(adminId);
-    res.json({ success: true, project: serializeProject(project), caller });
+    res.json({ success: true, project: await serializeProjectAsync(project), caller });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
 app.delete("/api/projects/:projectId/callers/:callerId", authenticateAdmin, async (req, res) => {
-  const adminId = (req as any).adminId;
-  const projectId = Number(req.params.projectId);
-  const callerId = Number(req.params.callerId);
-  const project = memory.projects.find((item) => item.id === projectId && item.adminId === adminId);
-  if (!project) return res.status(404).json({ error: "Project not found" });
-  memory.callerProjects = memory.callerProjects.filter((link) => !(link.projectId === projectId && link.callerId === callerId));
-  await deleteCallerProject(callerId, projectId);
-  broadcastStatsUpdate(adminId);
-  res.json({ success: true });
+  try {
+    const adminId = (req as any).adminId;
+    const projectId = Number(req.params.projectId);
+    const callerId = Number(req.params.callerId);
+    const project = prisma
+      ? await prisma.project.findFirst({ where: { id: projectId, adminId } })
+      : memory.projects.find((item) => item.id === projectId && item.adminId === adminId);
+    if (!project) return res.status(404).json({ error: "Project not found" });
+    if (prisma) {
+      await prisma.callerProject.deleteMany({ where: { callerId, projectId } });
+    } else {
+      memory.callerProjects = memory.callerProjects.filter((link) => !(link.projectId === projectId && link.callerId === callerId));
+      await deleteCallerProject(callerId, projectId);
+    }
+    broadcastStatsUpdate(adminId);
+    res.json({ success: true });
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
 app.get("/api/contacts/next", authenticateCaller, async (req, res) => {
@@ -1313,7 +1614,9 @@ app.get("/api/contacts/next", authenticateCaller, async (req, res) => {
     const projectId = Number(req.query.projectId);
     if (!callerId || !projectId) return res.status(400).json({ error: "callerId and projectId are required" });
     if (isProjectArchived(projectId)) return res.status(403).json({ error: "Project is archived" });
-    const allowed = memory.callerProjects.some((link) => link.callerId === callerId && link.projectId === projectId);
+    const allowed = prisma
+      ? await prisma.callerProject.findFirst({ where: { callerId, projectId } })
+      : memory.callerProjects.some((link) => link.callerId === callerId && link.projectId === projectId);
     if (!allowed) return res.status(403).json({ error: "Caller is not assigned to this project" });
 
     const contact = await allocateNextContact(callerId, projectId);
@@ -1322,11 +1625,22 @@ app.get("/api/contacts/next", authenticateCaller, async (req, res) => {
 });
 
 app.post("/api/contacts/skip", authenticateCaller, async (req, res) => {
-  const caller = (req as any).caller as Caller | undefined;
-  const contact = memory.contacts.find((item) => item.id === Number(req.body.contactId));
-  if (contact && caller && contact.callerId !== caller.id) return res.status(403).json({ error: "Contact is not assigned to this caller" });
-  if (contact) { contact.callerId = null; contact.lastCalledAt = null; await persistContact(contact); }
-  res.json({ success: true });
+  try {
+    const caller = (req as any).caller as Caller | undefined;
+    const contactId = Number(req.body.contactId);
+    if (prisma) {
+      const contact = await prisma.contact.findUnique({ where: { id: contactId } });
+      if (contact && caller && contact.callerId !== caller.id) return res.status(403).json({ error: "Contact is not assigned to this caller" });
+      if (contact) {
+        await prisma.contact.update({ where: { id: contactId }, data: { callerId: null, lastCalledAt: null } });
+      }
+    } else {
+      const contact = memory.contacts.find((item) => item.id === contactId);
+      if (contact && caller && contact.callerId !== caller.id) return res.status(403).json({ error: "Contact is not assigned to this caller" });
+      if (contact) { contact.callerId = null; contact.lastCalledAt = null; await persistContact(contact); }
+    }
+    res.json({ success: true });
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
 app.post("/api/calls", authenticateCaller, async (req, res) => {
@@ -1336,75 +1650,155 @@ app.post("/api/calls", authenticateCaller, async (req, res) => {
     const status = String(req.body.status || "");
     const callNotes = String(req.body.callNotes || "").trim().slice(0, 500);
     
-    const contact = memory.contacts.find((item) => item.id === contactId);
+    const contact = prisma
+      ? await prisma.contact.findUnique({ where: { id: contactId } })
+      : memory.contacts.find((item) => item.id === contactId);
     if (!contact) return res.status(404).json({ error: "Contact not found" });
 
-    const project = memory.projects.find((p) => p.id === contact.projectId);
+    const project = prisma
+      ? await prisma.project.findUnique({ where: { id: contact.projectId } })
+      : memory.projects.find((p) => p.id === contact.projectId);
     const adminId = project ? project.adminId : 1;
 
     const validStatuses = getCallStatusOptions(adminId).filter((item) => item.active).map((item) => item.id);
     if (!callerId || !contactId || !validStatuses.includes(status)) return res.status(400).json({ error: "Invalid call payload" });
     
-    const allowed = memory.callerProjects.some((link) => link.callerId === callerId && link.projectId === contact.projectId);
+    const allowed = prisma
+      ? await prisma.callerProject.findFirst({ where: { callerId, projectId: contact.projectId } })
+      : memory.callerProjects.some((link) => link.callerId === callerId && link.projectId === contact.projectId);
     if (!allowed) return res.status(403).json({ error: "Caller is not assigned to this project" });
     if (contact.callerId !== callerId) return res.status(409).json({ error: "Contact is not assigned to this caller" });
     
-    contact.status = status; contact.callNotes = callNotes || null; contact.lastCalledAt = new Date(); contact.callerId = callerId;
-    const log = { id: memory.ids.callLog++, projectId: contact.projectId, callerId, contactId, status, timestamp: new Date() };
-    memory.callLogs.push(log);
-    await persistContact(contact);
-    await persistCallLog(log);
-    broadcastStatsUpdate(adminId);
-    res.json({ ...log, caller: memory.callers.find((caller) => caller.id === callerId), contact });
+    if (prisma) {
+      await prisma.contact.update({ where: { id: contactId }, data: { status, callNotes: callNotes || null, lastCalledAt: new Date(), callerId } });
+      const logId = memory.ids.callLog++;
+      const log = await prisma.callLog.create({ data: { id: logId, projectId: contact.projectId, callerId, contactId, status, timestamp: new Date() } });
+      const callerRecord = await prisma.caller.findUnique({ where: { id: callerId } });
+      const updatedContact = await prisma.contact.findUnique({ where: { id: contactId } });
+      broadcastStatsUpdate(adminId);
+      res.json({ ...log, caller: callerRecord, contact: updatedContact });
+    } else {
+      contact.status = status; contact.callNotes = callNotes || null; contact.lastCalledAt = new Date(); (contact as any).callerId = callerId;
+      const log = { id: memory.ids.callLog++, projectId: contact.projectId, callerId, contactId, status, timestamp: new Date() };
+      memory.callLogs.push(log);
+      await persistContact(contact as any);
+      await persistCallLog(log);
+      broadcastStatsUpdate(adminId);
+      res.json({ ...log, caller: memory.callers.find((caller) => caller.id === callerId), contact });
+    }
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
-function resolveAdminId(req: express.Request): number {
+async function resolveAdminId(req: express.Request): Promise<number> {
   if ((req as any).adminId !== undefined) {
     return (req as any).adminId;
   }
   const customHeader = req.headers["x-admin-passcode"];
   const passcode = typeof customHeader === "string" ? customHeader : String(req.query.passcode || "");
   if (passcode === "halevi2026") return 1;
-  const admin = memory.admins.find((item) => item.passcode === passcode && item.status === "ACTIVE");
+  const admin = prisma
+    ? await prisma.admin.findFirst({ where: { passcode, status: "ACTIVE" } })
+    : memory.admins.find((item) => item.passcode === passcode && item.status === "ACTIVE");
   if (admin) return admin.id;
 
   const authHeader = req.headers.authorization;
   const callerId = Number(authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : undefined);
   if (callerId) {
-    const caller = memory.callers.find((c) => c.id === callerId);
+    const caller = prisma
+      ? await prisma.caller.findUnique({ where: { id: callerId } })
+      : memory.callers.find((c) => c.id === callerId);
     if (caller) return caller.adminId;
   }
 
   const projectId = Number(req.query.projectId || req.body.projectId || 0);
   if (projectId) {
-    const project = memory.projects.find((p) => p.id === projectId);
+    const project = prisma
+      ? await prisma.project.findUnique({ where: { id: projectId } })
+      : memory.projects.find((p) => p.id === projectId);
     if (project) return project.adminId;
   }
 
   return 1;
 }
 
-app.get("/api/stats/admin", authenticateAdmin, (req, res) => {
-  const adminId = (req as any).adminId;
-  const callers = memory.callers
-    .filter((caller) => caller.adminId === adminId)
-    .map((caller) => {
-      const logs = memory.callLogs.filter((log) => log.callerId === caller.id);
-      const successLogs = logs.filter((log) => log.status === "SUCCESS");
-      const lastLog = [...logs].sort((a, b) => Number(b.timestamp) - Number(a.timestamp))[0];
-      return { id: caller.id, name: caller.name, phone: caller.phone, totalCalls: logs.length, successCalls: successLogs.length, successRate: logs.length ? Math.round((successLogs.length / logs.length) * 100) : 0, lastCallTime: lastLog?.timestamp || null, projects: getCallerProjects(caller.id) };
-    });
-  res.json({ summary: allStats(adminId), callers, projects: memory.projects.filter((p) => p.adminId === adminId).map(serializeProject) });
+app.get("/api/stats/admin", authenticateAdmin, async (req, res) => {
+  try {
+    const adminId = (req as any).adminId;
+    const cacheKey = `admin_${adminId}`;
+    const cached = getCachedStats(cacheKey);
+    if (cached) return res.json(cached);
+
+    let callers: any[];
+    let projects: any[];
+
+    if (prisma) {
+      const dbCallers = await prisma.caller.findMany({ where: { adminId } });
+      callers = await Promise.all(dbCallers.map(async (caller) => {
+        const [totalCalls, successCalls, lastLog] = await Promise.all([
+          prisma!.callLog.count({ where: { callerId: caller.id } }),
+          prisma!.callLog.count({ where: { callerId: caller.id, status: "SUCCESS" } }),
+          prisma!.callLog.findFirst({ where: { callerId: caller.id }, orderBy: { timestamp: "desc" } }),
+        ]);
+        const callerProjects = await prisma!.callerProject.findMany({ where: { callerId: caller.id } });
+        const projectIds = callerProjects.map((l) => l.projectId);
+        const callerProjectRecords = projectIds.length ? await prisma!.project.findMany({ where: { id: { in: projectIds } } }) : [];
+        const activeCallerProjects = callerProjectRecords.filter((p) => !archivedProjectIds(adminId).includes(p.id));
+        return {
+          id: caller.id, name: caller.name, phone: caller.phone,
+          totalCalls, successCalls,
+          successRate: totalCalls ? Math.round((successCalls / totalCalls) * 100) : 0,
+          lastCallTime: lastLog?.timestamp || null,
+          projects: await Promise.all(activeCallerProjects.map((p) => serializeProjectAsync(p))),
+        };
+      }));
+      const dbProjects = await prisma.project.findMany({ where: { adminId } });
+      projects = await Promise.all(dbProjects.map((p) => serializeProjectAsync(p)));
+    } else {
+      callers = memory.callers
+        .filter((caller) => caller.adminId === adminId)
+        .map((caller) => {
+          const logs = memory.callLogs.filter((log) => log.callerId === caller.id);
+          const successLogs = logs.filter((log) => log.status === "SUCCESS");
+          const lastLog = [...logs].sort((a, b) => Number(b.timestamp) - Number(a.timestamp))[0];
+          return { id: caller.id, name: caller.name, phone: caller.phone, totalCalls: logs.length, successCalls: successLogs.length, successRate: logs.length ? Math.round((successLogs.length / logs.length) * 100) : 0, lastCallTime: lastLog?.timestamp || null, projects: getCallerProjects(caller.id) };
+        });
+      projects = memory.projects.filter((p) => p.adminId === adminId).map(serializeProject);
+    }
+
+    const summary = await allStatsFromDb(adminId);
+    const result = { summary, callers, projects };
+    setCachedStats(cacheKey, result);
+    res.json(result);
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
-app.get("/api/stats/tv", (req, res) => {
-  const adminId = resolveAdminId(req);
-  res.json(tvStats(adminId));
+app.get("/api/stats/tv", async (req, res) => {
+  try {
+    const adminId = await resolveAdminId(req);
+    const cacheKey = `tv_${adminId}`;
+    const cached = getCachedStats(cacheKey);
+    if (cached) return res.json(cached);
+    const result = await tvStats(adminId);
+    setCachedStats(cacheKey, result);
+    res.json(result);
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
-app.get("/api/settings", (req, res) => {
-  const adminId = resolveAdminId(req);
+app.get("/api/settings", async (req, res) => {
+  const adminId = await resolveAdminId(req);
+  if (prisma) {
+    const result: Record<string, string> = {};
+    for (const item of defaultSettings) {
+      result[item.key] = item.key === "call_status_options" ? JSON.stringify(getCallStatusOptions(adminId)) : item.value;
+    }
+    for (const [cacheKey, cacheValue] of settingsCache) {
+      if (cacheKey.startsWith(`${adminId}_`)) {
+        const key = cacheKey.substring(`${adminId}_`.length);
+        result[key] = key === "call_status_options" ? JSON.stringify(getCallStatusOptions(adminId)) : cacheValue;
+      }
+    }
+    return res.json(result);
+  }
   const adminSettings = memory.settings.filter((item) => item.adminId === adminId);
   const result: Record<string, string> = {
     ...Object.fromEntries(adminSettings.map((item) => [item.key, item.value])),
@@ -1422,11 +1816,17 @@ app.post("/api/settings", authenticateAdmin, async (req, res) => {
   const adminId = (req as any).adminId;
   const settings = req.body.settings;
   if (!settings || typeof settings !== "object") return res.status(400).json({ error: "Invalid settings payload" });
-  for (const [key, value] of Object.entries(settings)) {
-    let existing = memory.settings.find((item) => item.adminId === adminId && item.key === key);
-    if (existing) existing.value = String(value); else memory.settings.push({ adminId, key, value: String(value) });
+  if (prisma) {
+    for (const [key, value] of Object.entries(settings)) {
+      await persistSetting(adminId, key, String(value));
+    }
+  } else {
+    for (const [key, value] of Object.entries(settings)) {
+      let existing = memory.settings.find((item) => item.adminId === adminId && item.key === key);
+      if (existing) existing.value = String(value); else memory.settings.push({ adminId, key, value: String(value) });
+    }
+    await persistSettingsOnly();
   }
-  await persistSettingsOnly();
   broadcastStatsUpdate(adminId);
   res.json({ success: true });
 });
@@ -1493,9 +1893,10 @@ export async function startServer(port: string | number = PORT) {
         if (process.env.USE_MEMORY_DB === "true") {
           await loadMemoryStore();
         } else {
-          await loadPrismaStore();
+          await initIdsFromDb();
         }
         await initSettings();
+        startSettingsCacheSync();
         if (process.env.USE_MEMORY_DB === "true") await saveMemoryStore();
         server.off("error", onError);
         console.log("Server running on port " + port);

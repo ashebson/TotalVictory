@@ -27,11 +27,11 @@ app.use(cors());
 
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
-type Project = { id: number; name: string; sourceFileName?: string | null; sourceHeaders?: string[]; createdAt: Date };
-type Caller = { id: number; name: string; phone: string; whatsappTemplate?: string | null; createdAt: Date };
+type Project = { id: number; adminId: number; name: string; sourceFileName?: string | null; sourceHeaders?: string[]; createdAt: Date };
+type Caller = { id: number; adminId: number; name: string; phone: string; whatsappTemplate?: string | null; createdAt: Date };
 type Contact = { id: number; projectId: number; name: string; phone: string; city?: string | null; sector?: string | null; familySize?: number | null; notes?: string | null; status: string; callNotes?: string | null; sourceData?: Record<string, string>; lastCalledAt?: Date | null; callerId?: number | null };
 type CallLog = { id: number; projectId: number; callerId: number; contactId: number; status: string; timestamp: Date };
-type Store = { projects: Project[]; callers: Caller[]; contacts: Contact[]; callerProjects: { callerId: number; projectId: number }[]; callLogs: CallLog[]; settings: { key: string; value: string }[]; admins: any[]; subscriptions: any[]; ids: { project: number; caller: number; contact: number; callLog: number; admin: number; subscription: number } };
+type Store = { projects: Project[]; callers: Caller[]; contacts: Contact[]; callerProjects: { callerId: number; projectId: number }[]; callLogs: CallLog[]; settings: { adminId: number; key: string; value: string }[]; admins: any[]; subscriptions: any[]; ids: { project: number; caller: number; contact: number; callLog: number; admin: number; subscription: number } };
 
 const memory: Store = { projects: [], callers: [], contacts: [], callerProjects: [], callLogs: [], settings: [], admins: [], subscriptions: [], ids: { project: 1, caller: 1, contact: 1, callLog: 1, admin: 1, subscription: 1 } };
 
@@ -60,21 +60,27 @@ const defaultSettings = [
 function cleanPhone(phone: unknown) { return String(phone || "").replace(/\D/g, ""); }
 function normalizeHeader(value: string) { return value.trim().replace(/^"|"$/g, "").toLowerCase(); }
 
-function settingValue(key: string, fallback: string) {
-  return memory.settings.find((item) => item.key === key)?.value || fallback;
+function settingValue(adminId: number, key: string, fallback: string) {
+  let setting = memory.settings.find((item) => item.adminId === adminId && item.key === key);
+  if (!setting) {
+    const defaultValue = defaultSettings.find((item) => item.key === key)?.value || fallback;
+    setting = { adminId, key, value: defaultValue };
+    memory.settings.push(setting);
+  }
+  return setting.value;
 }
 
-function parseJsonSetting<T>(key: string, fallback: T): T {
+function parseJsonSetting<T>(adminId: number, key: string, fallback: T): T {
   try {
-    const raw = memory.settings.find((item) => item.key === key)?.value;
+    const raw = settingValue(adminId, key, "");
     return raw ? JSON.parse(raw) : fallback;
   } catch {
     return fallback;
   }
 }
 
-function getCallStatusOptions() {
-  const configured = parseJsonSetting<any[]>("call_status_options", defaultCallStatusOptions);
+function getCallStatusOptions(adminId: number) {
+  const configured = parseJsonSetting<any[]>(adminId, "call_status_options", defaultCallStatusOptions);
   const byId = new Map(configured.map((item) => [String(item.id || ""), item]));
   const options = defaultCallStatusOptions.map((base) => {
     const item = byId.get(base.id) || {};
@@ -84,32 +90,42 @@ function getCallStatusOptions() {
   return options.some((item) => item.active) ? options : defaultCallStatusOptions;
 }
 
-function callStatusLabel(status: string) {
-  return getCallStatusOptions().find((item) => item.id === status)?.label || status;
+function callStatusLabel(adminId: number, status: string) {
+  return getCallStatusOptions(adminId).find((item) => item.id === status)?.label || status;
 }
 
-function archivedProjectIds() {
-  return parseJsonSetting<number[]>("archived_project_ids", []).map(Number).filter(Number.isFinite);
+function archivedProjectIds(adminId: number) {
+  return parseJsonSetting<number[]>(adminId, "archived_project_ids", []).map(Number).filter(Number.isFinite);
 }
 
 function isProjectArchived(projectId: number) {
-  return archivedProjectIds().includes(projectId);
+  const project = memory.projects.find((p) => p.id === projectId);
+  if (!project) return false;
+  return archivedProjectIds(project.adminId).includes(projectId);
 }
 
-function setProjectArchived(projectId: number, archived: boolean) {
-  const ids = new Set(archivedProjectIds());
+function setProjectArchived(adminId: number, projectId: number, archived: boolean) {
+  const ids = new Set(archivedProjectIds(adminId));
   if (archived) ids.add(projectId); else ids.delete(projectId);
   const value = JSON.stringify([...ids]);
-  const existing = memory.settings.find((item) => item.key === "archived_project_ids");
-  if (existing) existing.value = value; else memory.settings.push({ key: "archived_project_ids", value });
+  let existing = memory.settings.find((item) => item.adminId === adminId && item.key === "archived_project_ids");
+  if (existing) existing.value = value; else memory.settings.push({ adminId, key: "archived_project_ids", value });
 }
 
-function activeContacts() {
-  return memory.contacts.filter((contact) => !isProjectArchived(contact.projectId));
+function activeContacts(adminId?: number) {
+  return memory.contacts.filter((contact) => {
+    const project = memory.projects.find((p) => p.id === contact.projectId);
+    if (!project) return false;
+    if (adminId !== undefined && project.adminId !== adminId) return false;
+    return !isProjectArchived(contact.projectId);
+  });
 }
 
-function activeProjects() {
-  return memory.projects.filter((project) => !isProjectArchived(project.id));
+function activeProjects(adminId?: number) {
+  return memory.projects.filter((project) => {
+    if (adminId !== undefined && project.adminId !== adminId) return false;
+    return !isProjectArchived(project.id);
+  });
 }
 
 async function saveStore() {
@@ -200,6 +216,7 @@ function authenticateOwner(req: express.Request, res: express.Response, next: ex
     || (typeof customHeader === "string" ? customHeader : undefined)
     || (typeof queryPasscode === "string" ? queryPasscode : undefined);
   if (passcode !== "halevi2026") return res.status(403).json({ error: "Owner access required" });
+  (req as any).adminId = 1;
   next();
 }
 
@@ -217,6 +234,7 @@ function authenticateAdmin(req: express.Request, res: express.Response, next: ex
   }
   
   if (passcode === "halevi2026") {
+    (req as any).adminId = 1;
     return next();
   }
   
@@ -225,6 +243,7 @@ function authenticateAdmin(req: express.Request, res: express.Response, next: ex
     return res.status(401).json({ error: "Invalid or inactive admin passcode" });
   }
   
+  (req as any).adminId = admin.id;
   next();
 }
 
@@ -475,9 +494,9 @@ function parseXlsx(base64: string) {
   return normalizeRows(rows);
 }
 
-function exportStatusLabel(status: string) {
+function exportStatusLabel(adminId: number, status: string) {
   if (status === "PENDING") return "ממתין לשיחה";
-  return callStatusLabel(status);
+  return callStatusLabel(adminId, status);
 }
 
 function csvEscape(value: unknown) {
@@ -487,6 +506,7 @@ function csvEscape(value: unknown) {
 
 function projectExportRows(projectId: number) {
   const project = memory.projects.find((item) => item.id === projectId);
+  const adminId = project ? project.adminId : 1;
   const projectContacts = memory.contacts.filter((contact) => contact.projectId === projectId).sort((a, b) => a.id - b.id);
   const originalHeaders = Array.from(new Set([
     ...(project?.sourceHeaders || []),
@@ -501,7 +521,7 @@ function projectExportRows(projectId: number) {
       : [contact.name, contact.phone, contact.city, contact.sector, contact.familySize, contact.notes];
     return [
       ...originalValues,
-      exportStatusLabel(contact.status),
+      exportStatusLabel(adminId, contact.status),
       contact.callNotes || "",
       contact.lastCalledAt ? contact.lastCalledAt.toLocaleDateString("he-IL") : "",
     ];
@@ -564,8 +584,8 @@ function projectStats(projectId: number) {
   };
 }
 
-function allStats() {
-  const contacts = activeContacts();
+function allStats(adminId: number) {
+  const contacts = activeContacts(adminId);
   return {
     total: contacts.length,
     pending: contacts.filter((contact) => contact.status === "PENDING").length,
@@ -577,31 +597,45 @@ function allStats() {
   };
 }
 
-function tvStats() {
-  const stats = allStats();
-  const settingValue = (key: string, fallback: string) => memory.settings.find((item) => item.key === key)?.value || fallback;
-  const leaderboard = memory.callers.map((caller) => {
-    const logs = memory.callLogs.filter((log) => log.callerId === caller.id);
-    const successLogs = logs.filter((log) => log.status === "SUCCESS");
-    return {
-      id: caller.id,
-      name: caller.name,
-      totalCalls: logs.length,
-      successCalls: successLogs.length,
-      successRate: logs.length ? Math.round((successLogs.length / logs.length) * 100) : 0,
-    };
-  }).filter((caller) => caller.totalCalls > 0).sort((a, b) => b.successCalls - a.successCalls || b.totalCalls - a.totalCalls).slice(0, 10);
-  const recentCalls = [...memory.callLogs].sort((a, b) => Number(b.timestamp) - Number(a.timestamp)).slice(0, 10).map((log) => {
-    const caller = memory.callers.find((item) => item.id === log.callerId);
-    const contact = memory.contacts.find((item) => item.id === log.contactId);
-    return {
-      id: log.id,
-      callerName: caller?.name || "טלפן",
-      contactName: contact?.name || "איש קשר",
-      status: log.status,
-      timestamp: log.timestamp,
-    };
-  });
+function tvStats(adminId: number = 1) {
+  const stats = allStats(adminId);
+  const getSetting = (key: string, fallback: string) => settingValue(adminId, key, fallback);
+  const leaderboard = memory.callers
+    .filter((caller) => caller.adminId === adminId)
+    .map((caller) => {
+      const logs = memory.callLogs.filter((log) => log.callerId === caller.id);
+      const successLogs = logs.filter((log) => log.status === "SUCCESS");
+      return {
+        id: caller.id,
+        name: caller.name,
+        totalCalls: logs.length,
+        successCalls: successLogs.length,
+        successRate: logs.length ? Math.round((successLogs.length / logs.length) * 100) : 0,
+      };
+    })
+    .filter((caller) => caller.totalCalls > 0)
+    .sort((a, b) => b.successCalls - a.successCalls || b.totalCalls - a.totalCalls)
+    .slice(0, 10);
+
+  const recentCalls = [...memory.callLogs]
+    .filter((log) => {
+      const project = memory.projects.find((p) => p.id === log.projectId);
+      return project && project.adminId === adminId;
+    })
+    .sort((a, b) => Number(b.timestamp) - Number(a.timestamp))
+    .slice(0, 10)
+    .map((log) => {
+      const caller = memory.callers.find((item) => item.id === log.callerId);
+      const contact = memory.contacts.find((item) => item.id === log.contactId);
+      return {
+        id: log.id,
+        callerName: caller?.name || "טלפן",
+        contactName: contact?.name || "איש קשר",
+        status: log.status,
+        timestamp: log.timestamp,
+      };
+    });
+
   return {
     ...stats,
     totalContacts: stats.total,
@@ -609,9 +643,9 @@ function tvStats() {
     successCalls: stats.success,
     leaderboard,
     recentCalls,
-    targetCalls: Number.parseInt(settingValue("target_calls", "5000"), 10) || 5000,
-    campaignName: settingValue("campaign_name", "מטה טלפנים דיגיטלי"),
-    projects: activeProjects().map(serializeProject),
+    targetCalls: Number.parseInt(getSetting("target_calls", "5000"), 10) || 5000,
+    campaignName: getSetting("campaign_name", "מטה טלפנים דיגיטלי"),
+    projects: activeProjects(adminId).map(serializeProject),
   };
 }
 
@@ -641,12 +675,12 @@ async function loadPrismaStore() {
     prisma.admin.findMany({ orderBy: { id: "asc" } }),
     prisma.subscription.findMany({ orderBy: { id: "asc" } }),
   ]);
-  memory.projects = projects.map((item: any) => ({ ...item, sourceHeaders: Array.isArray(item.sourceHeaders) ? item.sourceHeaders : [], createdAt: new Date(item.createdAt) }));
-  memory.callers = callers.map((item: any) => ({ ...item, phone: cleanPhone(item.phone), whatsappTemplate: item.whatsappTemplate || null, createdAt: new Date(item.createdAt) }));
+  memory.projects = projects.map((item: any) => ({ ...item, adminId: item.adminId, sourceHeaders: Array.isArray(item.sourceHeaders) ? item.sourceHeaders : [], createdAt: new Date(item.createdAt) }));
+  memory.callers = callers.map((item: any) => ({ ...item, adminId: item.adminId, phone: cleanPhone(item.phone), whatsappTemplate: item.whatsappTemplate || null, createdAt: new Date(item.createdAt) }));
   memory.contacts = contacts.map((item: any) => ({ ...item, sourceData: item.sourceData || null, lastCalledAt: item.lastCalledAt ? new Date(item.lastCalledAt) : null }));
   memory.callerProjects = callerProjects.map((item: any) => ({ callerId: item.callerId, projectId: item.projectId }));
   memory.callLogs = callLogs.map((item: any) => ({ ...item, timestamp: new Date(item.timestamp) }));
-  memory.settings = settings.map((item: any) => ({ key: item.key, value: item.value }));
+  memory.settings = settings.map((item: any) => ({ adminId: item.adminId, key: item.key, value: item.value }));
   memory.admins = admins.map((item: any) => ({ ...item, createdAt: new Date(item.createdAt).toISOString(), approvedAt: item.approvedAt ? new Date(item.approvedAt).toISOString() : null }));
   memory.subscriptions = subscriptions.map((item: any) => ({ ...item, createdAt: new Date(item.createdAt).toISOString() }));
   memory.ids = {
@@ -662,11 +696,11 @@ async function loadPrismaStore() {
 let prismaSaveQueue = Promise.resolve();
 
 function projectDbData(item: Project) {
-  return { id: item.id, name: item.name, sourceFileName: item.sourceFileName || null, sourceHeaders: item.sourceHeaders || [], createdAt: new Date(item.createdAt) };
+  return { id: item.id, adminId: item.adminId, name: item.name, sourceFileName: item.sourceFileName || null, sourceHeaders: item.sourceHeaders || [], createdAt: new Date(item.createdAt) };
 }
 
 function callerDbData(item: Caller) {
-  return { id: item.id, name: item.name || "", phone: cleanPhone(item.phone), whatsappTemplate: item.whatsappTemplate || null, createdAt: new Date(item.createdAt) };
+  return { id: item.id, adminId: item.adminId, name: item.name || "", phone: cleanPhone(item.phone), whatsappTemplate: item.whatsappTemplate || null, createdAt: new Date(item.createdAt) };
 }
 
 function contactDbData(item: Contact) {
@@ -677,14 +711,18 @@ function callLogDbData(item: CallLog) {
   return { id: item.id, projectId: item.projectId, callerId: item.callerId, contactId: item.contactId, status: item.status, timestamp: new Date(item.timestamp) };
 }
 
-async function persistSetting(key: string, value: string) {
+async function persistSetting(adminId: number, key: string, value: string) {
   if (!prisma) return saveMemoryStore();
-  await prisma.setting.upsert({ where: { key }, update: { value }, create: { key, value } });
+  await prisma.setting.upsert({
+    where: { adminId_key: { adminId, key } },
+    update: { value },
+    create: { adminId, key, value }
+  });
 }
 
 async function persistSettingsOnly() {
   if (!prisma) return saveMemoryStore();
-  await Promise.all(memory.settings.map((item) => persistSetting(item.key, item.value)));
+  await Promise.all(memory.settings.map((item) => persistSetting(item.adminId, item.key, item.value)));
 }
 
 async function persistCaller(caller: Caller) {
@@ -745,7 +783,7 @@ async function persistPrismaStore() {
   for (const project of memory.projects) await persistProject(project);
   for (const caller of memory.callers) await persistCaller(caller);
   for (const admin of memory.admins) await persistAdminRecord(admin);
-  for (const setting of memory.settings) await persistSetting(setting.key, setting.value);
+  for (const setting of memory.settings) await persistSetting(setting.adminId, setting.key, setting.value);
   for (const contact of memory.contacts) await persistContact(contact);
   for (const link of memory.callerProjects) await persistCallerProject(link.callerId, link.projectId);
   for (const subscription of memory.subscriptions) await persistSubscriptionRecord(subscription);
@@ -784,20 +822,30 @@ async function saveMemoryStore() {
 
 async function initSettings() {
   if (prisma) {
-    for (const item of defaultSettings) await prisma.setting.upsert({ where: { key: item.key }, update: {}, create: item });
+    for (const item of defaultSettings) {
+      await prisma.setting.upsert({
+        where: { adminId_key: { adminId: 1, key: item.key } },
+        update: {},
+        create: { adminId: 1, key: item.key, value: item.value }
+      });
+    }
     return;
   }
-  for (const item of defaultSettings) if (!memory.settings.some((setting) => setting.key === item.key)) memory.settings.push({ ...item });
+  for (const item of defaultSettings) {
+    if (!memory.settings.some((setting) => setting.adminId === 1 && setting.key === item.key)) {
+      memory.settings.push({ adminId: 1, key: item.key, value: item.value });
+    }
+  }
 }
 
-async function broadcastStatsUpdate() { io.emit("stats-update", tvStats()); }
+async function broadcastStatsUpdate(adminId: number = 1) { io.emit("stats-update", tvStats(adminId)); }
 
-function ensureCaller(name: string | undefined, phone: string) {
+function ensureCaller(name: string | undefined, phone: string, adminId: number) {
   const trimmed = String(name || "").trim();
   const normalizedPhone = cleanPhone(phone);
-  let caller = memory.callers.find((item) => item.phone === normalizedPhone);
+  let caller = memory.callers.find((item) => item.adminId === adminId && item.phone === normalizedPhone);
   if (!caller) {
-    caller = { id: memory.ids.caller++, name: trimmed, phone: normalizedPhone, whatsappTemplate: null, createdAt: new Date() };
+    caller = { id: memory.ids.caller++, adminId, name: trimmed, phone: normalizedPhone, whatsappTemplate: null, createdAt: new Date() };
     memory.callers.push(caller);
   } else if (trimmed && caller.name !== trimmed) {
     caller.name = trimmed;
@@ -995,15 +1043,24 @@ app.post("/api/login", async (req, res) => {
     const normalizedPhone = cleanPhone(phone);
     if (!name || !String(name).trim()) return res.status(400).json({ error: "Name is required" });
     if (normalizedPhone.length < 9) return res.status(400).json({ error: "Valid phone is required" });
-    const caller = ensureCaller(String(name), normalizedPhone);
-    await persistCaller(caller);
+    
+    let adminId = 1;
     if (joinProjectId) {
       const project = memory.projects.find((item) => item.id === joinProjectId);
       if (!project || isProjectArchived(joinProjectId)) return res.status(404).json({ error: "Project not found" });
+      adminId = project.adminId;
+    } else {
+      const existing = memory.callers.find((c) => c.phone === normalizedPhone);
+      if (existing) adminId = existing.adminId;
+    }
+
+    const caller = ensureCaller(String(name), normalizedPhone, adminId);
+    await persistCaller(caller);
+    if (joinProjectId) {
       linkCallerToProject(caller.id, joinProjectId);
       await persistCallerProject(caller.id, joinProjectId);
     }
-    broadcastStatsUpdate();
+    broadcastStatsUpdate(adminId);
     res.json({ ...caller, projects: getCallerProjects(caller.id) });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
@@ -1105,7 +1162,11 @@ app.post("/api/admins/:adminId/approve", authenticateOwner, async (req, res) => 
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
-app.get("/api/callers", authenticateAdmin, (_req, res) => res.json(memory.callers.map((caller) => ({ ...caller, projects: getCallerProjects(caller.id) }))));
+app.get("/api/callers", authenticateAdmin, (req, res) => {
+  const adminId = (req as any).adminId;
+  const callers = memory.callers.filter((caller) => caller.adminId === adminId);
+  res.json(callers.map((caller) => ({ ...caller, projects: getCallerProjects(caller.id) })));
+});
 app.get("/api/callers/:callerId/projects", authenticateCaller, (req, res) => res.json(getCallerProjects(Number(req.params.callerId))));
 
 app.post("/api/callers/:callerId/settings", authenticateCaller, async (req, res) => {
@@ -1119,26 +1180,31 @@ app.post("/api/callers/:callerId/settings", authenticateCaller, async (req, res)
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
-app.get("/api/projects", authenticateAdmin, (_req, res) => res.json(memory.projects.map(serializeProject)));
+app.get("/api/projects", authenticateAdmin, (req, res) => {
+  const adminId = (req as any).adminId;
+  res.json(memory.projects.filter((project) => project.adminId === adminId).map(serializeProject));
+});
 
 app.post("/api/projects/upload", authenticateAdmin, async (req, res) => {
   try {
+    const adminId = (req as any).adminId;
     const projectName = String(req.body.projectName || "").trim();
     if (!projectName) return res.status(400).json({ error: "Project name is required" });
     const contacts = parseUploadedContacts(req.body);
-    const project = { id: memory.ids.project++, name: projectName, sourceFileName: req.body.fileName || null, sourceHeaders: Array.isArray(contacts[0]?.sourceHeaders) ? contacts[0].sourceHeaders : [], createdAt: new Date() };
+    const project = { id: memory.ids.project++, adminId, name: projectName, sourceFileName: req.body.fileName || null, sourceHeaders: Array.isArray(contacts[0]?.sourceHeaders) ? contacts[0].sourceHeaders : [], createdAt: new Date() };
     memory.projects.push(project);
     const previousContactCount = memory.contacts.filter((contact) => contact.projectId === project.id).length;
     const result = insertContacts(project.id, contacts);
     await persistProjectUpload(project, previousContactCount);
-    broadcastStatsUpdate();
+    broadcastStatsUpdate(adminId);
     res.json({ success: true, project: serializeProject(project), ...result });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
 app.get("/api/projects/:projectId/export.csv", authenticateAdmin, (req, res) => {
+  const adminId = (req as any).adminId;
   const projectId = Number(req.params.projectId);
-  const project = memory.projects.find((item) => item.id === projectId);
+  const project = memory.projects.find((item) => item.id === projectId && item.adminId === adminId);
   if (!project) return res.status(404).send("Project not found");
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", "inline; filename=project-" + projectId + ".csv");
@@ -1146,8 +1212,9 @@ app.get("/api/projects/:projectId/export.csv", authenticateAdmin, (req, res) => 
 });
 
 app.get("/api/projects/:projectId/export.xlsx", authenticateAdmin, (req, res) => {
+  const adminId = (req as any).adminId;
   const projectId = Number(req.params.projectId);
-  const project = memory.projects.find((item) => item.id === projectId);
+  const project = memory.projects.find((item) => item.id === projectId && item.adminId === adminId);
   if (!project) return res.status(404).send("Project not found");
   const workbook = projectExportXlsx(projectId);
   res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
@@ -1156,47 +1223,53 @@ app.get("/api/projects/:projectId/export.xlsx", authenticateAdmin, (req, res) =>
 });
 
 app.delete("/api/projects/:projectId", authenticateAdmin, async (req, res) => {
+  const adminId = (req as any).adminId;
   const projectId = Number(req.params.projectId);
-  const project = memory.projects.find((item) => item.id === projectId);
+  const project = memory.projects.find((item) => item.id === projectId && item.adminId === adminId);
   if (!project) return res.status(404).json({ error: "Project not found" });
-  setProjectArchived(projectId, true);
+  setProjectArchived(adminId, projectId, true);
   await persistSettingsOnly();
-  broadcastStatsUpdate();
+  broadcastStatsUpdate(adminId);
   res.json({ success: true, archived: true, project: serializeProject(project) });
 });
 
 app.post("/api/projects/:projectId/restore", authenticateAdmin, async (req, res) => {
+  const adminId = (req as any).adminId;
   const projectId = Number(req.params.projectId);
-  const project = memory.projects.find((item) => item.id === projectId);
+  const project = memory.projects.find((item) => item.id === projectId && item.adminId === adminId);
   if (!project) return res.status(404).json({ error: "Project not found" });
-  setProjectArchived(projectId, false);
+  setProjectArchived(adminId, projectId, false);
   await persistSettingsOnly();
-  broadcastStatsUpdate();
+  broadcastStatsUpdate(adminId);
   res.json({ success: true, archived: false, project: serializeProject(project) });
 });
 
 app.post("/api/projects/:projectId/callers", authenticateAdmin, async (req, res) => {
   try {
+    const adminId = (req as any).adminId;
     const projectId = Number(req.params.projectId);
-    const project = memory.projects.find((item) => item.id === projectId);
+    const project = memory.projects.find((item) => item.id === projectId && item.adminId === adminId);
     if (!project) return res.status(404).json({ error: "Project not found" });
     const phone = cleanPhone(req.body.phone);
     if (phone.length < 9) return res.status(400).json({ error: "Valid caller phone is required" });
-    const caller = ensureCaller(undefined, phone);
+    const caller = ensureCaller(undefined, phone, adminId);
     linkCallerToProject(caller.id, projectId);
     await persistCaller(caller);
     await persistCallerProject(caller.id, projectId);
-    broadcastStatsUpdate();
+    broadcastStatsUpdate(adminId);
     res.json({ success: true, project: serializeProject(project), caller });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
 app.delete("/api/projects/:projectId/callers/:callerId", authenticateAdmin, async (req, res) => {
+  const adminId = (req as any).adminId;
   const projectId = Number(req.params.projectId);
   const callerId = Number(req.params.callerId);
+  const project = memory.projects.find((item) => item.id === projectId && item.adminId === adminId);
+  if (!project) return res.status(404).json({ error: "Project not found" });
   memory.callerProjects = memory.callerProjects.filter((link) => !(link.projectId === projectId && link.callerId === callerId));
   await deleteCallerProject(callerId, projectId);
-  broadcastStatsUpdate();
+  broadcastStatsUpdate(adminId);
   res.json({ success: true });
 });
 
@@ -1228,68 +1301,125 @@ app.post("/api/calls", authenticateCaller, async (req, res) => {
     const contactId = Number(req.body.contactId);
     const status = String(req.body.status || "");
     const callNotes = String(req.body.callNotes || "").trim().slice(0, 500);
-    const validStatuses = getCallStatusOptions().filter((item) => item.active).map((item) => item.id);
-    if (!callerId || !contactId || !validStatuses.includes(status)) return res.status(400).json({ error: "Invalid call payload" });
+    
     const contact = memory.contacts.find((item) => item.id === contactId);
     if (!contact) return res.status(404).json({ error: "Contact not found" });
+
+    const project = memory.projects.find((p) => p.id === contact.projectId);
+    const adminId = project ? project.adminId : 1;
+
+    const validStatuses = getCallStatusOptions(adminId).filter((item) => item.active).map((item) => item.id);
+    if (!callerId || !contactId || !validStatuses.includes(status)) return res.status(400).json({ error: "Invalid call payload" });
+    
     const allowed = memory.callerProjects.some((link) => link.callerId === callerId && link.projectId === contact.projectId);
     if (!allowed) return res.status(403).json({ error: "Caller is not assigned to this project" });
     if (contact.callerId !== callerId) return res.status(409).json({ error: "Contact is not assigned to this caller" });
+    
     contact.status = status; contact.callNotes = callNotes || null; contact.lastCalledAt = new Date(); contact.callerId = callerId;
     const log = { id: memory.ids.callLog++, projectId: contact.projectId, callerId, contactId, status, timestamp: new Date() };
     memory.callLogs.push(log);
     await persistContact(contact);
     await persistCallLog(log);
-    broadcastStatsUpdate();
+    broadcastStatsUpdate(adminId);
     res.json({ ...log, caller: memory.callers.find((caller) => caller.id === callerId), contact });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
-app.get("/api/stats/admin", authenticateAdmin, (_req, res) => {
-  const callers = memory.callers.map((caller) => {
-    const logs = memory.callLogs.filter((log) => log.callerId === caller.id);
-    const successLogs = logs.filter((log) => log.status === "SUCCESS");
-    const lastLog = [...logs].sort((a, b) => Number(b.timestamp) - Number(a.timestamp))[0];
-    return { id: caller.id, name: caller.name, phone: caller.phone, totalCalls: logs.length, successCalls: successLogs.length, successRate: logs.length ? Math.round((successLogs.length / logs.length) * 100) : 0, lastCallTime: lastLog?.timestamp || null, projects: getCallerProjects(caller.id) };
-  });
-  res.json({ summary: allStats(), callers, projects: memory.projects.map(serializeProject) });
+function resolveAdminId(req: express.Request): number {
+  if ((req as any).adminId !== undefined) {
+    return (req as any).adminId;
+  }
+  const customHeader = req.headers["x-admin-passcode"];
+  const passcode = typeof customHeader === "string" ? customHeader : String(req.query.passcode || "");
+  if (passcode === "halevi2026") return 1;
+  const admin = memory.admins.find((item) => item.passcode === passcode && item.status === "ACTIVE");
+  if (admin) return admin.id;
+
+  const authHeader = req.headers.authorization;
+  const callerId = Number(authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : undefined);
+  if (callerId) {
+    const caller = memory.callers.find((c) => c.id === callerId);
+    if (caller) return caller.adminId;
+  }
+
+  const projectId = Number(req.query.projectId || req.body.projectId || 0);
+  if (projectId) {
+    const project = memory.projects.find((p) => p.id === projectId);
+    if (project) return project.adminId;
+  }
+
+  return 1;
+}
+
+app.get("/api/stats/admin", authenticateAdmin, (req, res) => {
+  const adminId = (req as any).adminId;
+  const callers = memory.callers
+    .filter((caller) => caller.adminId === adminId)
+    .map((caller) => {
+      const logs = memory.callLogs.filter((log) => log.callerId === caller.id);
+      const successLogs = logs.filter((log) => log.status === "SUCCESS");
+      const lastLog = [...logs].sort((a, b) => Number(b.timestamp) - Number(a.timestamp))[0];
+      return { id: caller.id, name: caller.name, phone: caller.phone, totalCalls: logs.length, successCalls: successLogs.length, successRate: logs.length ? Math.round((successLogs.length / logs.length) * 100) : 0, lastCallTime: lastLog?.timestamp || null, projects: getCallerProjects(caller.id) };
+    });
+  res.json({ summary: allStats(adminId), callers, projects: memory.projects.filter((p) => p.adminId === adminId).map(serializeProject) });
 });
 
-app.get("/api/stats/tv", (_req, res) => res.json(tvStats()));
-app.get("/api/settings", (_req, res) => res.json({
-  ...Object.fromEntries(memory.settings.map((item) => [item.key, item.value])),
-  call_status_options: JSON.stringify(getCallStatusOptions()),
-}));
+app.get("/api/stats/tv", (req, res) => {
+  const adminId = resolveAdminId(req);
+  res.json(tvStats(adminId));
+});
+
+app.get("/api/settings", (req, res) => {
+  const adminId = resolveAdminId(req);
+  const adminSettings = memory.settings.filter((item) => item.adminId === adminId);
+  const result: Record<string, string> = {
+    ...Object.fromEntries(adminSettings.map((item) => [item.key, item.value])),
+    call_status_options: JSON.stringify(getCallStatusOptions(adminId)),
+  };
+  for (const item of defaultSettings) {
+    if (result[item.key] === undefined) {
+      result[item.key] = item.key === "call_status_options" ? JSON.stringify(getCallStatusOptions(adminId)) : item.value;
+    }
+  }
+  res.json(result);
+});
 
 app.post("/api/settings", authenticateAdmin, async (req, res) => {
+  const adminId = (req as any).adminId;
   const settings = req.body.settings;
   if (!settings || typeof settings !== "object") return res.status(400).json({ error: "Invalid settings payload" });
   for (const [key, value] of Object.entries(settings)) {
-    const existing = memory.settings.find((item) => item.key === key);
-    if (existing) existing.value = String(value); else memory.settings.push({ key, value: String(value) });
+    let existing = memory.settings.find((item) => item.adminId === adminId && item.key === key);
+    if (existing) existing.value = String(value); else memory.settings.push({ adminId, key, value: String(value) });
   }
   await persistSettingsOnly();
-  broadcastStatsUpdate();
+  broadcastStatsUpdate(adminId);
   res.json({ success: true });
 });
 
 app.post("/api/contacts/upload", authenticateAdmin, async (req, res) => {
   try {
-    let project = memory.projects[0];
+    const adminId = (req as any).adminId;
+    let project = memory.projects.find((p) => p.adminId === adminId);
     let isNewProject = false;
-    if (!project) { project = { id: memory.ids.project++, name: "פרויקט ראשי", sourceFileName: null, createdAt: new Date() }; memory.projects.push(project); isNewProject = true; }
+    if (!project) {
+      project = { id: memory.ids.project++, adminId, name: "פרויקט ראשי", sourceFileName: null, createdAt: new Date() };
+      memory.projects.push(project);
+      isNewProject = true;
+    }
     const previousContactCount = memory.contacts.filter((contact) => contact.projectId === project.id).length;
     const result = insertContacts(project.id, req.body.contacts || []);
     if (isNewProject) await persistProject(project);
     await persistProjectUpload(project, previousContactCount);
-    broadcastStatsUpdate();
+    broadcastStatsUpdate(adminId);
     res.json({ success: true, ...result, project: serializeProject(project) });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
-app.post("/api/contacts/seed", authenticateAdmin, async (_req, res) => {
-  let project = memory.projects.find((item) => item.name === "פרויקט דוגמה");
-  if (!project) { project = { id: memory.ids.project++, name: "פרויקט דוגמה", sourceFileName: "seed", createdAt: new Date() }; memory.projects.push(project); }
+app.post("/api/contacts/seed", authenticateAdmin, async (req, res) => {
+  const adminId = (req as any).adminId;
+  let project = memory.projects.find((item) => item.name === "פרויקט דוגמה" && item.adminId === adminId);
+  if (!project) { project = { id: memory.ids.project++, adminId, name: "פרויקט דוגמה", sourceFileName: "seed", createdAt: new Date() }; memory.projects.push(project); }
   const contacts = [
     { name: "משה כהן", phone: "0501234567", city: "ירושלים", sector: "דתי לאומי", familySize: 5, notes: "תומך ותיק של המועמד/ת" },
     { name: "שרה לוי", phone: "0529876543", city: "תל אביב", sector: "כללי", familySize: 3, notes: "מתלבטת בין כמה מועמדים" },
@@ -1298,11 +1428,12 @@ app.post("/api/contacts/seed", authenticateAdmin, async (_req, res) => {
   ];
   const previousContactCount = memory.contacts.filter((contact) => contact.projectId === project.id).length;
   const result = insertContacts(project.id, contacts);
-  if (memory.callers.length) linkCallerToProject(memory.callers[0].id, project.id);
+  const firstCaller = memory.callers.find((c) => c.adminId === adminId);
+  if (firstCaller) linkCallerToProject(firstCaller.id, project.id);
   await persistProject(project);
   await persistProjectUpload(project, previousContactCount);
-  if (memory.callers.length) await persistCallerProject(memory.callers[0].id, project.id);
-  broadcastStatsUpdate();
+  if (firstCaller) await persistCallerProject(firstCaller.id, project.id);
+  broadcastStatsUpdate(adminId);
   res.json({ success: true, seededCount: result.inserted, project: serializeProject(project) });
 });
 

@@ -103,7 +103,7 @@ export default function App() {
 
   const fetchSettings = async () => {
     try {
-      const res = await fetch(API_URL + "/api/settings");
+      const res = await fetch(API_URL + "/api/settings" + window.location.search, { headers: getCallerHeaders() });
       if (res.ok) {
         const settings = await res.json();
         setGlobalWhatsappTemplate(settings.whatsapp_template || DEFAULT_WHATSAPP_TEMPLATE);

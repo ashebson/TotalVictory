@@ -155,6 +155,8 @@ async function runBackendIntegrationChecks() {
   await step("Start isolated backend test server", async () => { server = await startBackend(); return server.baseUrl; });
   if (!server) return;
   const adminHeaders = { "x-admin-passcode": ADMIN_PASSCODE };
+  let approvedAdminPasscode = "";
+  let adminBPasscode = "";
   try {
     await step("Admin API rejects missing passcode", async () => {
       const stats = await request(server.baseUrl, "GET", "/api/stats/admin");
@@ -192,6 +194,7 @@ async function runBackendIntegrationChecks() {
       const approval = await request(server.baseUrl, "POST", "/api/admins/" + pendingAdmin.id + "/approve", { headers: adminHeaders });
       assert.equal(approval.status, 200);
       assert.ok(approval.data.passcode);
+      approvedAdminPasscode = approval.data.passcode;
       const afterApproval = await request(server.baseUrl, "GET", "/api/admins/registration-requests", { headers: adminHeaders });
       assert.equal(afterApproval.status, 200);
       const approvedAdmin = afterApproval.data.find((item) => item.email === pendingEmail);
@@ -218,6 +221,67 @@ async function runBackendIntegrationChecks() {
       assert.equal(options.find((item) => item.id === "SUCCESS").label, "תומך בבדיקה");
       assert.equal(options.find((item) => item.id === "INVALID_NUMBER").active, false);
       return "saved " + options.length + " options";
+    });
+    await step("Admins have fully isolated private environments (multi-tenant)", async () => {
+      const emailB = "admin-b-" + Date.now() + "@example.com";
+      const regB = await request(server.baseUrl, "POST", "/api/admins/register", { body: { fullName: "מנהל ב", email: emailB, phone: "0501111111", organization: "מטה ב", planId: "monthly" } });
+      assert.equal(regB.status, 200);
+      
+      const ownerList = await request(server.baseUrl, "GET", "/api/admins/registration-requests", { headers: adminHeaders });
+      const pendingB = ownerList.data.find((item) => item.email === emailB);
+      const appB = await request(server.baseUrl, "POST", "/api/admins/" + pendingB.id + "/approve", { headers: adminHeaders });
+      assert.equal(appB.status, 200);
+      adminBPasscode = appB.data.passcode;
+
+      const headersA = { "x-admin-passcode": approvedAdminPasscode };
+      const headersB = { "x-admin-passcode": adminBPasscode };
+
+      const uploadA = await request(server.baseUrl, "POST", "/api/projects/upload", {
+        headers: headersA,
+        body: { projectName: "פרויקט של א", contacts: [] }
+      });
+      assert.equal(uploadA.status, 200);
+      const projAId = uploadA.data.project.id;
+
+      const uploadB = await request(server.baseUrl, "POST", "/api/projects/upload", {
+        headers: headersB,
+        body: { projectName: "פרויקט של ב", contacts: [] }
+      });
+      assert.equal(uploadB.status, 200);
+      const projBId = uploadB.data.project.id;
+
+      const listA = await request(server.baseUrl, "GET", "/api/projects", { headers: headersA });
+      assert.ok(listA.data.some((p) => p.id === projAId));
+      assert.ok(!listA.data.some((p) => p.id === projBId));
+
+      const listB = await request(server.baseUrl, "GET", "/api/projects", { headers: headersB });
+      assert.ok(listB.data.some((p) => p.id === projBId));
+      assert.ok(!listB.data.some((p) => p.id === projAId));
+
+      const saveSettingsA = await request(server.baseUrl, "POST", "/api/settings", {
+        headers: headersA,
+        body: { settings: { campaign_name: "קמפיין א" } }
+      });
+      assert.equal(saveSettingsA.status, 200);
+
+      const getSettingsB = await request(server.baseUrl, "GET", "/api/settings?passcode=" + adminBPasscode);
+      assert.equal(getSettingsB.data.campaign_name, "מטה טלפנים דיגיטלי");
+
+      const phone = "0555555555";
+      const loginA = await request(server.baseUrl, "POST", "/api/login", {
+        body: { name: "טלפן של א", phone, projectId: projAId }
+      });
+      assert.equal(loginA.status, 200);
+      assert.ok(loginA.data.projects.some((p) => p.id === projAId));
+
+      const loginB = await request(server.baseUrl, "POST", "/api/login", {
+        body: { name: "טלפן של ב", phone, projectId: projBId }
+      });
+      assert.equal(loginB.status, 200);
+      assert.ok(loginB.data.projects.some((p) => p.id === projBId));
+      assert.ok(!loginB.data.projects.some((p) => p.id === projAId));
+
+      return "multitenancy isolation verified successfully";
     });
     let projectId;
     const callers = [];

@@ -9,6 +9,8 @@ generator client {
 
 model Project {
   id             Int             @id
+  adminId        Int             @default(1)
+  admin          Admin           @relation(fields: [adminId], references: [id], onDelete: Cascade)
   name           String
   sourceFileName String?
   sourceHeaders  Json?
@@ -16,17 +18,23 @@ model Project {
   contacts       Contact[]
   callLogs       CallLog[]
   callerProjects CallerProject[]
+
+  @@index([adminId])
 }
 
 model Caller {
   id             Int             @id
+  adminId        Int             @default(1)
+  admin          Admin           @relation(fields: [adminId], references: [id], onDelete: Cascade)
   name           String
-  phone          String          @unique
+  phone          String
   whatsappTemplate String?
   createdAt      DateTime        @default(now())
   contacts       Contact[]
   callLogs       CallLog[]
   callerProjects CallerProject[]
+
+  @@unique([adminId, phone])
 }
 
 model CallerProject {
@@ -79,8 +87,12 @@ model CallLog {
 }
 
 model Setting {
-  key   String @id
-  value String
+  adminId Int    @default(1)
+  admin   Admin  @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  key     String
+  value   String
+
+  @@id([adminId, key])
 }
 
 
@@ -95,6 +107,9 @@ model Admin {
   createdAt     DateTime       @default(now())
   approvedAt    DateTime?
   subscriptions Subscription[]
+  projects      Project[]
+  callers       Caller[]
+  settings      Setting[]
 }
 
 model Subscription {

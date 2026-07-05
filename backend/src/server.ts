@@ -1909,6 +1909,7 @@ app.get("/api/stats/admin", authenticateAdmin, async (req, res) => {
 
     let callers: any[];
     let projects: any[];
+    let recentCalls: any[];
 
     if (prisma) {
       const dbCallers = await prisma.caller.findMany({ where: { adminId } });
@@ -1932,6 +1933,20 @@ app.get("/api/stats/admin", authenticateAdmin, async (req, res) => {
       }));
       const dbProjects = await prisma.project.findMany({ where: { adminId } });
       projects = await Promise.all(dbProjects.map((p) => serializeProjectAsync(p)));
+
+      const recentLogs = await prisma.callLog.findMany({
+        where: { project: { adminId } },
+        orderBy: { timestamp: "desc" },
+        take: 10,
+        include: { caller: true, contact: true },
+      });
+      recentCalls = recentLogs.map((log) => ({
+        id: log.id,
+        callerName: log.caller?.name || "טלפן",
+        contactName: log.contact?.name || "איש קשר",
+        status: log.status,
+        timestamp: log.timestamp,
+      }));
     } else {
       callers = memory.callers
         .filter((caller) => caller.adminId === adminId)
@@ -1942,10 +1957,29 @@ app.get("/api/stats/admin", authenticateAdmin, async (req, res) => {
           return { id: caller.id, name: caller.name, phone: caller.phone, totalCalls: logs.length, successCalls: successLogs.length, successRate: logs.length ? Math.round((successLogs.length / logs.length) * 100) : 0, lastCallTime: lastLog?.timestamp || null, projects: getCallerProjects(caller.id) };
         });
       projects = memory.projects.filter((p) => p.adminId === adminId).map(serializeProject);
+
+      recentCalls = [...memory.callLogs]
+        .filter((log) => {
+          const project = memory.projects.find((p) => p.id === log.projectId);
+          return project && project.adminId === adminId;
+        })
+        .sort((a, b) => Number(b.timestamp) - Number(a.timestamp))
+        .slice(0, 10)
+        .map((log) => {
+          const caller = memory.callers.find((item) => item.id === log.callerId);
+          const contact = memory.contacts.find((item) => item.id === log.contactId);
+          return {
+            id: log.id,
+            callerName: caller?.name || "טלפן",
+            contactName: contact?.name || "איש קשר",
+            status: log.status,
+            timestamp: log.timestamp,
+          };
+        });
     }
 
     const summary = await allStatsFromDb(adminId);
-    const result = { summary, callers, projects, isExpired: isExpiredAdmin(adminId) };
+    const result = { summary, callers, projects, recentCalls, isExpired: isExpiredAdmin(adminId) };
     setCachedStats(cacheKey, result);
     res.json(result);
   } catch (error: any) { res.status(500).json({ error: error.message }); }

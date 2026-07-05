@@ -134,6 +134,7 @@ function AdminApp() {
   const [summary, setSummary] = useState<Summary>(emptySummary);
   const [callers, setCallers] = useState<Caller[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [recentCalls, setRecentCalls] = useState<any[]>([]);
   const [isExpired, setIsExpired] = useState(false);
 
   const [loading, setLoading] = useState(false);
@@ -184,6 +185,7 @@ function AdminApp() {
     setSummary(data.summary || emptySummary);
     setCallers(data.callers || []);
     setProjects(data.projects || []);
+    setRecentCalls(data.recentCalls || []);
     setIsExpired(!!data.isExpired);
   };
 
@@ -414,6 +416,12 @@ function AdminApp() {
   const resetCallStatusOptions = () => setCallStatusOptions(defaultCallStatusOptions);
 
   const percent = (value: number, total: number) => total ? Math.round((value / total) * 100) : 0;
+  const getStatusLabel = (status: string) => {
+    return callStatusOptions.find((o) => o.id === status)?.label || status;
+  };
+  const getStatusClass = (status: string) => {
+    return callStatusOptions.find((o) => o.id === status)?.className || "no-answer";
+  };
   const completionRate = percent(summary.totalCalled, summary.total);
   const successRate = percent(summary.success, summary.totalCalled);
   const answerRate = percent(summary.success + summary.notInterested, summary.totalCalled);
@@ -605,10 +613,36 @@ function AdminApp() {
               </section>
             </div>
 
-            <section className="insight-card project-progress-card">
-              <div className="insight-header"><h2>התקדמות פרויקטים</h2><span>{activeProjects.length} פרויקטים</span></div>
-              {topProjects.length === 0 ? <div className="empty-state">אין עדיין פרויקטים להצגה.</div> : <div className="project-progress-list">{topProjects.map((project) => { const done = percent(project.stats.totalCalled, project.stats.total); return <div className="project-progress-row" key={project.id}><div><strong>{project.name}</strong><span>{project.stats.totalCalled} מתוך {project.stats.total}</span></div><div className="wide-progress"><span style={{ width: done + "%" }}></span></div><b>{done}%</b></div>; })}</div>}
-            </section>
+            <div className="dashboard-grid">
+              <section className="insight-card project-progress-card" style={{ marginBottom: 0 }}>
+                <div className="insight-header"><h2>התקדמות פרויקטים</h2><span>{activeProjects.length} פרויקטים</span></div>
+                {topProjects.length === 0 ? <div className="empty-state">אין עדיין פרויקטים להצגה.</div> : <div className="project-progress-list">{topProjects.map((project) => { const done = percent(project.stats.totalCalled, project.stats.total); return <div className="project-progress-row" key={project.id}><div><strong>{project.name}</strong><span>{project.stats.totalCalled} מתוך {project.stats.total}</span></div><div className="wide-progress"><span style={{ width: done + "%" }}></span></div><b>{done}%</b></div>; })}</div>}
+              </section>
+
+              <section className="insight-card ticker-card" style={{ display: "flex", flexDirection: "column" }}>
+                <div className="insight-header">
+                  <h2>דיווחים חיים מהשטח</h2>
+                  <span className="ticker-live-dot" style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", backgroundColor: "#10b981", boxShadow: "0 0 8px #10b981", animation: "pulse 2s infinite" }}></span>
+                </div>
+                {recentCalls.length === 0 ? (
+                  <div className="empty-state" style={{ flexGrow: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>אין עדיין שיחות לדיווח.</div>
+                ) : (
+                  <div className="feed-list" style={{ display: "flex", flexDirection: "column", gap: "10px", maxHeight: "250px", overflowY: "auto", paddingLeft: "8px" }}>
+                    {recentCalls.map((call) => (
+                      <div key={call.id} className="feed-item" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(255,255,255,0.02)", padding: "10px 14px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.05)" }}>
+                        <span className="time-cell" style={{ fontSize: "12px", color: "#a0a0a0", direction: "ltr" }}>{new Date(call.timestamp).toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+                        <span style={{ fontSize: "14px", color: "#e3e3e3", flexGrow: 1, marginRight: "12px", textAlign: "right" }}>
+                          <strong>{call.callerName}</strong> התקשר ל-{call.contactName}
+                        </span>
+                        <span className={`status-preview ${getStatusClass(call.status)}`} style={{ fontSize: "11px", padding: "4px 8px", borderRadius: "999px", fontWeight: "800", border: "1px solid rgba(255, 255, 255, 0.12)", whiteSpace: "nowrap" }}>
+                          {getStatusLabel(call.status)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </div>
 
             <div className="table-card"><div className="table-card-header"><h2>טלפנים פעילים</h2></div>
               {callers.length === 0 ? <div className="empty-state">אין טלפנים פעילים כרגע.</div> : <div className="table-responsive"><table className="admin-table"><thead><tr><th>דירוג</th><th>טלפן</th><th>טלפון</th><th>שיחות</th><th>הצלחות</th><th>אחוז הצלחה</th><th>פרויקטים</th><th>שיחה אחרונה</th></tr></thead><tbody>{[...callers].sort((a, b) => (b.successCalls || 0) - (a.successCalls || 0) || (b.totalCalls || 0) - (a.totalCalls || 0)).map((caller, index) => <tr key={caller.id}><td><span className="rank-badge table-rank">#{index + 1}</span></td><td className="caller-name-cell"><span className="avatar-small">{caller.name?.[0] || "?"}</span>{caller.name}</td><td>{caller.phone || "-"}</td><td>{caller.totalCalls || 0}</td><td className="success-cell">{caller.successCalls || 0}</td><td><span className="score-pill">{caller.successRate || 0}%</span></td><td>{caller.projects?.map((project) => project.name).join(", ") || "-"}</td><td className="time-cell">{caller.lastCallTime ? new Date(caller.lastCallTime).toLocaleString("he-IL") : "-"}</td></tr>)}</tbody></table></div>}

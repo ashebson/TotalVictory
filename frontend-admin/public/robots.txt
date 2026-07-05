@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://totalvictory.vercel.app/sitemap.xml

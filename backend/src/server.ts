@@ -2095,6 +2095,14 @@ async function resolveAdminId(req: express.Request): Promise<number> {
     if (project) return project.adminId;
   }
 
+  const inviteToken = typeof req.query.invite === "string" ? req.query.invite : (typeof req.query.inviteToken === "string" ? req.query.inviteToken : undefined);
+  if (inviteToken) {
+    const project = prisma
+      ? await prisma.project.findFirst({ where: { inviteToken } })
+      : memory.projects.find((p) => p.inviteToken === inviteToken);
+    if (project) return project.adminId;
+  }
+
   return 1;
 }
 

@@ -88,7 +88,7 @@ export default function LandingPage({ onLogin, onRegister }: LandingPageProps) {
         <div className="header-container">
           <div className="landing-logo">
             <span className="logo-icon">🏆</span>
-            <span className="logo-text">TVictory</span>
+            <span className="logo-text">DVictory</span>
           </div>
           <nav className="landing-nav">
             <a href="#features">תכונות המערכת</a>
@@ -113,15 +113,13 @@ export default function LandingPage({ onLogin, onRegister }: LandingPageProps) {
               <span className="gradient-text">לקולות בקלפי.</span>
             </h1>
             <p className="hero-desc">
-              מערכת טי ויקטורי (TVictory) מספקת מעטפת מושלמת לקמפיין בחירות מנצח: טעינת רשימות בוחרים מאקסל, חלוקת משימות לטלפנים, ניטור הספקים ושידורים חיים למסכי המטה בזמן אמת.
+              מערכת די ויקטורי (DVictory) מספקת מעטפת מושלמת לקמפיין בחירות מנצח: טעינת רשימות בוחרים מאקסל, חלוקת משימות לטלפנים, ניטור הספקים ושידורים חיים למסכי המטה בזמן אמת.
             </p>
             <div className="hero-actions">
               <button className="btn-hero-primary" onClick={onRegister}>התחל קמפיין עכשיו</button>
             </div>
             <div className="hero-trust">
               <span>✓ מסלול חודשי פשוט</span>
-              <span>•</span>
-              <span>✓ עד 50 טלפנים בו זמנית</span>
               <span>•</span>
               <span>✓ אבטחת מידע קפדנית</span>
             </div>
@@ -137,7 +135,7 @@ export default function LandingPage({ onLogin, onRegister }: LandingPageProps) {
                   <span className="dot yellow"></span>
                   <span className="dot green"></span>
                 </div>
-                <div className="sim-title">TVictory - לוח בקרה מנהל (הדמיה)</div>
+                <div className="sim-title">DVictory - לוח בקרה מנהל (הדמיה)</div>
                 <div className="sim-live-badge">שידור חי • LIVE</div>
               </div>
 
@@ -405,10 +403,10 @@ export default function LandingPage({ onLogin, onRegister }: LandingPageProps) {
         <div className="footer-container">
           <div className="footer-logo">
             <span>🏆</span>
-            <span>TVictory</span>
+            <span>DVictory</span>
           </div>
           <div className="footer-copyright">
-            © {new Date().getFullYear()} TVictory. כל הזכויות שמורות.
+            © {new Date().getFullYear()} DVictory. כל הזכויות שמורות.
           </div>
         </div>
       </footer>

@@ -1404,7 +1404,7 @@ async function ownerAdminRegistrations() {
 }
 
 function planLabel(planId: string) {
-  return 'חודשי - 990 ש"ח (עד 50 טלפנים)';
+  return 'חודשי - 990 ש"ח';
 }
 
 function formatWhatsAppPhone(phone: string) {
@@ -1525,7 +1525,7 @@ app.post("/api/admins/validate", rateLimiter(50, 60000), async (req, res) => {
 
 app.get("/api/subscriptions/plans", (_req, res) => {
   res.json([
-    { id: "monthly", name: "מנוי חודשי (עד 50 טלפנים)", price: 990, currency: "ILS", interval: "month" }
+    { id: "monthly", name: "מנוי חודשי", price: 990, currency: "ILS", interval: "month" }
   ]);
 });
 
@@ -1538,12 +1538,28 @@ app.post("/api/admins/register", rateLimiter(5, 60000), async (req, res) => {
     const planId = String(req.body.planId || "monthly");
     if (!fullName || !email || phone.length < 9 || !organization) return res.status(400).json({ error: "Missing admin registration details" });
 
-    let admin = memory.admins.find((item) => item.email === email || cleanPhone(item.phone) === phone);
+    let admin: any = null;
+    if (prisma) {
+      admin = await prisma.admin.findFirst({
+        where: {
+          OR: [
+            { email },
+            { phone }
+          ]
+        }
+      });
+    } else {
+      admin = memory.admins.find((item) => item.email === email || cleanPhone(item.phone) === phone);
+    }
+
     if (!admin) {
       admin = { id: memory.ids.admin++, fullName, email, phone, organization, passcode: generatePasscode(), status: "PENDING", createdAt: new Date().toISOString() };
       memory.admins.push(admin);
     } else {
       Object.assign(admin, { fullName, email, phone, organization, status: admin.status === "ACTIVE" ? "ACTIVE" : "PENDING" });
+      if (!memory.admins.some((a) => a.id === admin.id)) {
+        memory.admins.push(admin);
+      }
     }
 
     const subscription = { id: memory.ids.subscription++, adminId: admin.id, planId: "monthly", status: admin.status === "ACTIVE" ? "ACTIVE" : "PENDING", provider: "bank_transfer", amount: 990, currency: "ILS", createdAt: new Date().toISOString() };

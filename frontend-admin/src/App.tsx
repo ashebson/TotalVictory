@@ -573,7 +573,7 @@ function AdminApp() {
                 <div className="input-group">
                   <label>מסלול מנוי</label>
                   <div className="plan-static-badge">
-                    <strong>מסלול חודשי מלא</strong> - 990 ₪ / חודש (עד 50 טלפנים בו זמנית)
+                    <strong>מסלול חודשי מלא</strong> - 990 ₪ / חודש
                   </div>
                 </div>
                 <div className="payment-note">בסיום ההרשמה הבקשה נשלחת לבדיקה פרטית של בעל המערכת. לאחר אישור התשלום יישלח אליך קוד גישה בצורה מסודרת.</div>
@@ -764,7 +764,7 @@ function AdminApp() {
               {isOwner && (
                 <div className="settings-section admin-requests-panel">
                   <div className="settings-section-title">
-                    <h3>ניהול מנהלים ורישיונות (TVictory Owner)</h3>
+                    <h3>ניהול מנהלים ורישיונות (DVictory Owner)</h3>
                     <button type="button" onClick={fetchAdminRequests}>רענן רשימה</button>
                   </div>
                   

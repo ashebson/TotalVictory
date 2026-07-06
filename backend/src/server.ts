@@ -938,17 +938,28 @@ async function tvStats(adminId: number = 1) {
 }
 
 function serializeProject(project: Project) {
+  let inviteToken = project.inviteToken || "";
+  if (!inviteToken) {
+    inviteToken = generateInviteToken();
+    project.inviteToken = inviteToken;
+  }
   const callerIds = memory.callerProjects.filter((link) => link.projectId === project.id).map((link) => link.callerId);
-  return { ...project, archived: isProjectArchived(project.id), stats: projectStats(project.id), callers: memory.callers.filter((caller) => callerIds.includes(caller.id)) };
+  return { ...project, inviteToken, archived: isProjectArchived(project.id), stats: projectStats(project.id), callers: memory.callers.filter((caller) => callerIds.includes(caller.id)) };
 }
 
 async function serializeProjectAsync(project: any) {
   if (!prisma) return serializeProject(project as Project);
+  let inviteToken = project.inviteToken || "";
+  if (!inviteToken) {
+    inviteToken = generateInviteToken();
+    await prisma.project.update({ where: { id: project.id }, data: { inviteToken } });
+    project.inviteToken = inviteToken;
+  }
   const callerProjectLinks = await prisma.callerProject.findMany({ where: { projectId: project.id } });
   const callerIds = callerProjectLinks.map((l) => l.callerId);
   const callers = callerIds.length ? await prisma.caller.findMany({ where: { id: { in: callerIds } } }) : [];
   const stats = await projectStatsFromDb(project.id);
-  return { ...project, archived: isProjectArchived(project.id), stats, callers };
+  return { ...project, inviteToken, archived: isProjectArchived(project.id), stats, callers };
 }
 
 function getCallerProjects(callerId: number) {

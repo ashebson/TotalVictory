@@ -11,6 +11,7 @@ type Project = {
   id: number;
   name: string;
   stats?: { total: number; pending: number; totalCalled: number; success: number };
+  inviteToken?: string;
 };
 
 type Caller = {
@@ -42,12 +43,13 @@ const defaultCallStatusOptions: CallStatusOption[] = [
 ];
 
 export default function App() {
-  const inviteProjectId = Number(new URLSearchParams(window.location.search).get("projectId") || 0);
+  const inviteToken = new URLSearchParams(window.location.search).get("invite") || "";
   const [caller, setCaller] = useState<Caller | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [callerNameInput, setCallerNameInput] = useState("");
   const [callerPhoneInput, setCallerPhoneInput] = useState("");
+  const [callerPasscodeInput, setCallerPasscodeInput] = useState("");
   const [currentContact, setCurrentContact] = useState<Contact | null>(null);
   const [loading, setLoading] = useState(false);
   const [isSwipedRight, setIsSwipedRight] = useState(false);
@@ -81,7 +83,7 @@ export default function App() {
     if (!saved) return;
     try {
       const parsed = JSON.parse(saved);
-      if (parsed?.name && parsed?.phone) restoreSession(parsed.name, parsed.phone);
+      if (parsed?.name && parsed?.phone && parsed?.passcode) restoreSession(parsed.name, parsed.phone, parsed.passcode);
     } catch {
       localStorage.removeItem("total_victory_caller");
     }
@@ -129,9 +131,16 @@ export default function App() {
       if (!res.ok) return;
       const data = await res.json();
       setProjects(data || []);
-      const targetProjectId = inviteProjectId || Number(localStorage.getItem("total_victory_project_id"));
-      const savedProject = data.find((project: Project) => project.id === targetProjectId);
-      if (savedProject) setSelectedProject(savedProject);
+      
+      let targetProject = null;
+      if (inviteToken) {
+        targetProject = data.find((project: Project) => project.inviteToken === inviteToken);
+      }
+      if (!targetProject) {
+        const targetProjectId = Number(localStorage.getItem("total_victory_project_id"));
+        targetProject = data.find((project: Project) => project.id === targetProjectId);
+      }
+      if (targetProject) setSelectedProject(targetProject);
       else if (data.length === 1) chooseProject(data[0]);
     } catch {
       setErrorMsg("לא ניתן לטעון את הפרויקטים המשויכים אליך.");
@@ -164,13 +173,13 @@ export default function App() {
     }
   };
 
-  const restoreSession = async (name: string, phone: string) => {
+  const restoreSession = async (name: string, phone: string, passcode: string) => {
     setLoading(true);
     try {
       const res = await fetch(API_URL + "/api/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, phone, projectId: inviteProjectId || undefined }),
+        body: JSON.stringify({ name, phone, passcode, inviteToken: inviteToken || undefined }),
       });
       if (!res.ok) {
         if (res.status === 402) {
@@ -186,10 +195,17 @@ export default function App() {
       setCaller(data);
       setPersonalWhatsappTemplate(data.whatsappTemplate || "");
       setProjects(data.projects || []);
-      localStorage.setItem("total_victory_caller", JSON.stringify({ id: data.id, name: data.name, phone: data.phone }));
-      const targetProjectId = inviteProjectId || Number(localStorage.getItem("total_victory_project_id"));
-      const savedProject = (data.projects || []).find((project: Project) => project.id === targetProjectId);
-      if (savedProject) chooseProject(savedProject);
+      localStorage.setItem("total_victory_caller", JSON.stringify({ id: data.id, name: data.name, phone: data.phone, passcode }));
+      
+      let targetProject = null;
+      if (inviteToken) {
+        targetProject = (data.projects || []).find((project: Project) => project.inviteToken === inviteToken);
+      }
+      if (!targetProject) {
+        const targetProjectId = Number(localStorage.getItem("total_victory_project_id"));
+        targetProject = (data.projects || []).find((project: Project) => project.id === targetProjectId);
+      }
+      if (targetProject) chooseProject(targetProject);
       else if ((data.projects || []).length === 1) chooseProject(data.projects[0]);
       else setSelectedProject(null);
     } catch {
@@ -202,30 +218,43 @@ export default function App() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!callerNameInput.trim() || !callerPhoneInput.trim()) return;
+    if (!callerNameInput.trim() || !callerPhoneInput.trim() || !callerPasscodeInput.trim()) return;
     setLoading(true);
     setErrorMsg(null);
     try {
       const res = await fetch(API_URL + "/api/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: callerNameInput.trim(), phone: callerPhoneInput.trim(), projectId: inviteProjectId || undefined }),
+        body: JSON.stringify({ name: callerNameInput.trim(), phone: callerPhoneInput.trim(), passcode: callerPasscodeInput.trim(), inviteToken: inviteToken || undefined }),
       });
       if (!res.ok) {
         if (res.status === 402) {
           setErrorMsg("רישיון המערכת פג. אנא פנה למנהל המטה.");
           return;
         }
-        throw new Error("login failed");
+        if (res.status === 401) {
+          setErrorMsg("קוד גישה אינו נכון. אנא נסה שנית.");
+          return;
+        }
+        const errData = await res.json().catch(() => ({}));
+        setErrorMsg(errData.error || "שגיאה בחיבור למערכת.");
+        return;
       }
       const data = await res.json();
       setCaller(data);
       setPersonalWhatsappTemplate(data.whatsappTemplate || "");
       setProjects(data.projects || []);
-      localStorage.setItem("total_victory_caller", JSON.stringify({ id: data.id, name: data.name, phone: data.phone }));
-      const targetProjectId = inviteProjectId || Number(localStorage.getItem("total_victory_project_id"));
-      const savedProject = (data.projects || []).find((project: Project) => project.id === targetProjectId);
-      if (savedProject) chooseProject(savedProject);
+      localStorage.setItem("total_victory_caller", JSON.stringify({ id: data.id, name: data.name, phone: data.phone, passcode: callerPasscodeInput.trim() }));
+      
+      let targetProject = null;
+      if (inviteToken) {
+        targetProject = (data.projects || []).find((project: Project) => project.inviteToken === inviteToken);
+      }
+      if (!targetProject) {
+        const targetProjectId = Number(localStorage.getItem("total_victory_project_id"));
+        targetProject = (data.projects || []).find((project: Project) => project.id === targetProjectId);
+      }
+      if (targetProject) chooseProject(targetProject);
       else if ((data.projects || []).length === 1) chooseProject(data.projects[0]);
     } catch {
       setErrorMsg("שגיאה בחיבור למערכת.");
@@ -351,7 +380,11 @@ export default function App() {
             <label htmlFor="callerPhone">מספר טלפון:</label>
             <input id="callerPhone" type="tel" placeholder="0501234567" value={callerPhoneInput} onChange={(e) => setCallerPhoneInput(e.target.value)} disabled={loading} required />
           </div>
-          <button type="submit" className="btn-primary" disabled={loading || !callerNameInput.trim() || !callerPhoneInput.trim()}>{loading ? "מתחבר..." : "כניסה למערכת"}</button>
+          <div className="input-group">
+            <label htmlFor="callerPasscode">קוד גישה אישי (ספרות או אותיות):</label>
+            <input id="callerPasscode" type="password" placeholder="לפחות 4 תווים..." value={callerPasscodeInput} onChange={(e) => setCallerPasscodeInput(e.target.value)} disabled={loading} required />
+          </div>
+          <button type="submit" className="btn-primary" disabled={loading || !callerNameInput.trim() || !callerPhoneInput.trim() || !callerPasscodeInput.trim()}>{loading ? "מתחבר..." : "כניסה למערכת"}</button>
         </form>
       </div>
     );

@@ -385,7 +385,7 @@ export default function LandingPage({ onLogin, onRegister }: LandingPageProps) {
           </p>
           <div className="security-stats">
             <div className="sec-stat">
-              <strong>AWS</strong>
+              <strong>Cloud</strong>
               <span>שרתים מאובטחים</span>
             </div>
             <div className="sec-stat">

@@ -15,6 +15,7 @@ model Project {
   sourceFileName String?
   sourceHeaders  Json?
   createdAt      DateTime        @default(now())
+  inviteToken    String          @default("")
   contacts       Contact[]
   callLogs       CallLog[]
   callerProjects CallerProject[]
@@ -29,6 +30,7 @@ model Caller {
   name           String
   phone          String
   whatsappTemplate String?
+  passcodeHash   String          @default("")
   createdAt      DateTime        @default(now())
   contacts       Contact[]
   callLogs       CallLog[]

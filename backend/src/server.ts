@@ -9,6 +9,7 @@ import zlib from "zlib";
 import path from "path";
 import fs from "fs/promises";
 import nodemailer from "nodemailer";
+import crypto from "crypto";
 
 const DATA_FILE = path.resolve(process.cwd(), "data/local-db.json");
 const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || "20mb";
@@ -66,13 +67,33 @@ setInterval(() => {
 
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
-type Project = { id: number; adminId: number; name: string; sourceFileName?: string | null; sourceHeaders?: string[]; createdAt: Date };
-type Caller = { id: number; adminId: number; name: string; phone: string; whatsappTemplate?: string | null; createdAt: Date };
+type Project = { id: number; adminId: number; name: string; sourceFileName?: string | null; sourceHeaders?: string[]; createdAt: Date; inviteToken: string };
+type Caller = { id: number; adminId: number; name: string; phone: string; whatsappTemplate?: string | null; createdAt: Date; passcodeHash: string };
 type Contact = { id: number; projectId: number; name: string; phone: string; city?: string | null; sector?: string | null; familySize?: number | null; notes?: string | null; status: string; callNotes?: string | null; sourceData?: Record<string, string>; lastCalledAt?: Date | null; callerId?: number | null };
 type CallLog = { id: number; projectId: number; callerId: number; contactId: number; status: string; timestamp: Date };
 type Store = { projects: Project[]; callers: Caller[]; contacts: Contact[]; callerProjects: { callerId: number; projectId: number }[]; callLogs: CallLog[]; settings: { adminId: number; key: string; value: string }[]; admins: any[]; subscriptions: any[]; ids: { project: number; caller: number; contact: number; callLog: number; admin: number; subscription: number } };
 
 const memory: Store = { projects: [], callers: [], contacts: [], callerProjects: [], callLogs: [], settings: [], admins: [], subscriptions: [], ids: { project: 1, caller: 1, contact: 1, callLog: 1, admin: 1, subscription: 1 } };
+
+// --- Cryptographic Security Helpers ---
+function hashPassword(password: string, salt?: string): string {
+  const actualSalt = salt || crypto.randomBytes(16).toString("hex");
+  const hash = crypto.pbkdf2Sync(password, actualSalt, 1000, 64, "sha512").toString("hex");
+  return `${actualSalt}:${hash}`;
+}
+
+function verifyPassword(password: string, storedValue: string): boolean {
+  if (!storedValue) return false;
+  const parts = storedValue.split(":");
+  if (parts.length !== 2) return false;
+  const [salt, hash] = parts;
+  const verifyHash = crypto.pbkdf2Sync(password, salt, 1000, 64, "sha512").toString("hex");
+  return hash === verifyHash;
+}
+
+function generateInviteToken(): string {
+  return "inv_" + crypto.randomBytes(16).toString("hex");
+}
 
 // --- Settings Cache (DB-First with Delta Sync) ---
 const settingsCache = new Map<string, string>();
@@ -327,7 +348,8 @@ function authenticateOwner(req: express.Request, res: express.Response, next: ex
   const passcode = (authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : authHeader)
     || (typeof customHeader === "string" ? customHeader : undefined)
     || (typeof queryPasscode === "string" ? queryPasscode : undefined);
-  if (passcode !== "halevi2026") return res.status(403).json({ error: "Owner access required" });
+  const ownerPasscode = process.env.OWNER_PASSCODE || "halevi2026";
+  if (passcode !== ownerPasscode) return res.status(403).json({ error: "Owner access required" });
   (req as any).adminId = 1;
   next();
 }
@@ -970,8 +992,16 @@ async function loadPrismaStore() {
     prisma.admin.findMany({ orderBy: { id: "asc" } }),
     prisma.subscription.findMany({ orderBy: { id: "asc" } }),
   ]);
-  memory.projects = projects.map((item: any) => ({ ...item, adminId: item.adminId, sourceHeaders: Array.isArray(item.sourceHeaders) ? item.sourceHeaders : [], createdAt: new Date(item.createdAt) }));
-  memory.callers = callers.map((item: any) => ({ ...item, adminId: item.adminId, phone: cleanPhone(item.phone), whatsappTemplate: item.whatsappTemplate || null, createdAt: new Date(item.createdAt) }));
+  memory.projects = [];
+  for (const item of projects) {
+    let inviteToken = item.inviteToken || "";
+    if (!inviteToken) {
+      inviteToken = generateInviteToken();
+      await prisma.project.update({ where: { id: item.id }, data: { inviteToken } });
+    }
+    memory.projects.push({ ...item, adminId: item.adminId, sourceHeaders: Array.isArray(item.sourceHeaders) ? (item.sourceHeaders as string[]) : [], createdAt: new Date(item.createdAt), inviteToken });
+  }
+  memory.callers = callers.map((item: any) => ({ ...item, adminId: item.adminId, phone: cleanPhone(item.phone), whatsappTemplate: item.whatsappTemplate || null, createdAt: new Date(item.createdAt), passcodeHash: item.passcodeHash || "" }));
   memory.contacts = contacts.map((item: any) => ({ ...item, sourceData: item.sourceData || null, lastCalledAt: item.lastCalledAt ? new Date(item.lastCalledAt) : null }));
   memory.callerProjects = callerProjects.map((item: any) => ({ callerId: item.callerId, projectId: item.projectId }));
   memory.callLogs = callLogs.map((item: any) => ({ ...item, timestamp: new Date(item.timestamp) }));
@@ -991,11 +1021,11 @@ async function loadPrismaStore() {
 let prismaSaveQueue = Promise.resolve();
 
 function projectDbData(item: Project) {
-  return { id: item.id, adminId: item.adminId, name: item.name, sourceFileName: item.sourceFileName || null, sourceHeaders: item.sourceHeaders || [], createdAt: new Date(item.createdAt) };
+  return { id: item.id, adminId: item.adminId, name: item.name, sourceFileName: item.sourceFileName || null, sourceHeaders: item.sourceHeaders || [], createdAt: new Date(item.createdAt), inviteToken: item.inviteToken || "" };
 }
 
 function callerDbData(item: Caller) {
-  return { id: item.id, adminId: item.adminId, name: item.name || "", phone: cleanPhone(item.phone), whatsappTemplate: item.whatsappTemplate || null, createdAt: new Date(item.createdAt) };
+  return { id: item.id, adminId: item.adminId, name: item.name || "", phone: cleanPhone(item.phone), whatsappTemplate: item.whatsappTemplate || null, createdAt: new Date(item.createdAt), passcodeHash: item.passcodeHash || "" };
 }
 
 function contactDbData(item: Contact) {
@@ -1157,15 +1187,16 @@ async function initSettings() {
 
 async function broadcastStatsUpdate(adminId: number = 1) { invalidateStatsCache(adminId); io.emit("stats-update", await tvStats(adminId)); }
 
-function ensureCaller(name: string | undefined, phone: string, adminId: number) {
+function ensureCaller(name: string | undefined, phone: string, adminId: number, passcodeHash: string = "") {
   const trimmed = String(name || "").trim();
   const normalizedPhone = cleanPhone(phone);
   let caller = memory.callers.find((item) => item.adminId === adminId && item.phone === normalizedPhone);
   if (!caller) {
-    caller = { id: memory.ids.caller++, adminId, name: trimmed, phone: normalizedPhone, whatsappTemplate: null, createdAt: new Date() };
+    caller = { id: memory.ids.caller++, adminId, name: trimmed, phone: normalizedPhone, whatsappTemplate: null, createdAt: new Date(), passcodeHash };
     memory.callers.push(caller);
-  } else if (trimmed && caller.name !== trimmed) {
-    caller.name = trimmed;
+  } else {
+    if (trimmed && caller.name !== trimmed) caller.name = trimmed;
+    if (passcodeHash && !caller.passcodeHash) caller.passcodeHash = passcodeHash;
   }
   return caller;
 }
@@ -1280,7 +1311,7 @@ async function allocateNextContact(callerId: number, projectId: number) {
 }
 
 function generatePasscode() {
-  return "admin-" + Math.random().toString(36).slice(2, 8);
+  return "admin-" + crypto.randomBytes(3).toString("hex");
 }
 
 function publicAdmin(admin: any) {
@@ -1356,18 +1387,23 @@ io.on("connection", (socket) => { console.log("Client connected:", socket.id); s
 
 app.post("/api/login", rateLimiter(50, 60000), async (req, res) => {
   try {
-    const { name, phone } = req.body;
-    const joinProjectId = Number(req.body.projectId || 0);
+    const { name, phone, passcode, inviteToken } = req.body;
     const normalizedPhone = cleanPhone(phone);
-    if (!name || !String(name).trim()) return res.status(400).json({ error: "Name is required" });
-    if (normalizedPhone.length < 9) return res.status(400).json({ error: "Valid phone is required" });
+    if (!name || !String(name).trim()) return res.status(400).json({ error: "שם הוא שדה חובה" });
+    if (normalizedPhone.length < 9) return res.status(400).json({ error: "מספר טלפון אינו תקין" });
+    if (!passcode || String(passcode).length < 4) return res.status(400).json({ error: "קוד גישה חייב להכיל 4 תווים לפחות" });
     
     let adminId = 1;
-    if (joinProjectId) {
+    let joinProjectId = 0;
+    
+    if (inviteToken) {
       const project = prisma
-        ? await prisma.project.findUnique({ where: { id: joinProjectId } })
-        : memory.projects.find((item) => item.id === joinProjectId);
-      if (!project || isProjectArchived(joinProjectId)) return res.status(404).json({ error: "Project not found" });
+        ? await prisma.project.findFirst({ where: { inviteToken } })
+        : memory.projects.find((item) => item.inviteToken === inviteToken);
+      if (!project || isProjectArchived(project.id)) {
+        return res.status(400).json({ error: "קישור ההצטרפות אינו תקין או פג תוקף" });
+      }
+      joinProjectId = project.id;
       adminId = project.adminId;
     } else {
       const existing = prisma
@@ -1383,21 +1419,49 @@ app.post("/api/login", rateLimiter(50, 60000), async (req, res) => {
       });
     }
 
-    const caller = ensureCaller(String(name), normalizedPhone, adminId);
-    await persistCaller(caller);
-    if (joinProjectId) {
-      linkCallerToProject(caller.id, joinProjectId);
-      await persistCallerProject(caller.id, joinProjectId);
+    // Check if caller exists
+    let existingCaller = prisma
+      ? await prisma.caller.findFirst({ where: { adminId, phone: normalizedPhone } })
+      : memory.callers.find((c) => c.adminId === adminId && c.phone === normalizedPhone);
+
+    if (existingCaller) {
+      if (existingCaller.passcodeHash) {
+        if (!verifyPassword(passcode, existingCaller.passcodeHash)) {
+          return res.status(401).json({ error: "קוד גישה אינו נכון. אנא נסה שנית." });
+        }
+      } else {
+        // Legacy caller, upgrade them on first login
+        existingCaller.passcodeHash = hashPassword(passcode);
+        await persistCaller(existingCaller);
+      }
+      // Update name if changed
+      const trimmedName = String(name).trim();
+      if (trimmedName && existingCaller.name !== trimmedName) {
+        existingCaller.name = trimmedName;
+        await persistCaller(existingCaller);
+      }
+    } else {
+      // New caller
+      const passcodeHash = hashPassword(passcode);
+      existingCaller = ensureCaller(String(name), normalizedPhone, adminId, passcodeHash);
+      await persistCaller(existingCaller);
     }
+
+    if (joinProjectId) {
+      linkCallerToProject(existingCaller.id, joinProjectId);
+      await persistCallerProject(existingCaller.id, joinProjectId);
+    }
+    
     broadcastStatsUpdate(adminId);
-    res.json({ ...caller, projects: getCallerProjects(caller.id) });
+    res.json({ ...existingCaller, projects: getCallerProjects(existingCaller.id) });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
 app.post("/api/admins/validate", rateLimiter(50, 60000), async (req, res) => {
   try {
     const passcode = String(req.body.passcode || "");
-    if (passcode === "halevi2026") return res.json({ success: true, admin: { id: 0, fullName: "מנהל ראשי", planId: "legacy" } });
+    const ownerPasscode = process.env.OWNER_PASSCODE || "halevi2026";
+    if (passcode === ownerPasscode) return res.json({ success: true, admin: { id: 0, fullName: "מנהל ראשי", planId: "legacy" } });
     const admin = prisma
       ? await prisma.admin.findFirst({ where: { passcode, status: "ACTIVE" } })
       : memory.admins.find((item) => item.passcode === passcode && item.status === "ACTIVE");
@@ -1636,7 +1700,7 @@ app.post("/api/projects/upload", authenticateAdmin, async (req, res) => {
     const projectName = String(req.body.projectName || "").trim();
     if (!projectName) return res.status(400).json({ error: "Project name is required" });
     const contacts = parseUploadedContacts(req.body);
-    const project = { id: memory.ids.project++, adminId, name: projectName, sourceFileName: req.body.fileName || null, sourceHeaders: Array.isArray(contacts[0]?.sourceHeaders) ? contacts[0].sourceHeaders : [], createdAt: new Date() };
+    const project = { id: memory.ids.project++, adminId, name: projectName, sourceFileName: req.body.fileName || null, sourceHeaders: Array.isArray(contacts[0]?.sourceHeaders) ? contacts[0].sourceHeaders : [], createdAt: new Date(), inviteToken: generateInviteToken() };
     memory.projects.push(project);
     const previousContactCount = memory.contacts.filter((contact) => contact.projectId === project.id).length;
     const result = insertContacts(project.id, contacts);
@@ -1646,6 +1710,33 @@ app.post("/api/projects/upload", authenticateAdmin, async (req, res) => {
     }
     broadcastStatsUpdate(adminId);
     res.json({ success: true, project: await serializeProjectAsync(project), ...result });
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
+});
+
+app.post("/api/projects/:projectId/reset-invite-token", authenticateAdmin, async (req, res) => {
+  try {
+    const adminId = (req as any).adminId;
+    const projectId = Number(req.params.projectId);
+    const project = prisma
+      ? await prisma.project.findFirst({ where: { id: projectId, adminId } })
+      : memory.projects.find((p) => p.id === projectId && p.adminId === adminId);
+    if (!project) return res.status(404).json({ error: "פרויקט לא נמצא" });
+
+    const newToken = generateInviteToken();
+    
+    // Update local memory
+    const memoryProj = memory.projects.find((p) => p.id === projectId);
+    if (memoryProj) memoryProj.inviteToken = newToken;
+
+    // Update DB
+    if (prisma) {
+      await prisma.project.update({ where: { id: projectId }, data: { inviteToken: newToken } });
+    } else {
+      await saveMemoryStore();
+    }
+    
+    broadcastStatsUpdate(adminId);
+    res.json({ success: true, inviteToken: newToken });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
@@ -1873,7 +1964,8 @@ async function resolveAdminId(req: express.Request): Promise<number> {
   }
   const customHeader = req.headers["x-admin-passcode"];
   const passcode = typeof customHeader === "string" ? customHeader : String(req.query.passcode || "");
-  if (passcode === "halevi2026") return 1;
+  const ownerPasscode = process.env.OWNER_PASSCODE || "halevi2026";
+  if (passcode === ownerPasscode) return 1;
   const admin = prisma
     ? await prisma.admin.findFirst({ where: { passcode, status: "ACTIVE" } })
     : memory.admins.find((item) => item.passcode === passcode && item.status === "ACTIVE");
@@ -2049,7 +2141,7 @@ app.post("/api/contacts/upload", authenticateAdmin, async (req, res) => {
     let project = memory.projects.find((p) => p.adminId === adminId);
     let isNewProject = false;
     if (!project) {
-      project = { id: memory.ids.project++, adminId, name: "פרויקט ראשי", sourceFileName: null, createdAt: new Date() };
+      project = { id: memory.ids.project++, adminId, name: "פרויקט ראשי", sourceFileName: null, createdAt: new Date(), inviteToken: generateInviteToken() };
       memory.projects.push(project);
       isNewProject = true;
     }
@@ -2065,7 +2157,7 @@ app.post("/api/contacts/upload", authenticateAdmin, async (req, res) => {
 app.post("/api/contacts/seed", authenticateAdmin, async (req, res) => {
   const adminId = (req as any).adminId;
   let project = memory.projects.find((item) => item.name === "פרויקט דוגמה" && item.adminId === adminId);
-  if (!project) { project = { id: memory.ids.project++, adminId, name: "פרויקט דוגמה", sourceFileName: "seed", createdAt: new Date() }; memory.projects.push(project); }
+  if (!project) { project = { id: memory.ids.project++, adminId, name: "פרויקט דוגמה", sourceFileName: "seed", createdAt: new Date(), inviteToken: generateInviteToken() }; memory.projects.push(project); }
   const contacts = [
     { name: "משה כהן", phone: "0501234567", city: "ירושלים", sector: "דתי לאומי", familySize: 5, notes: "תומך ותיק של המועמד/ת" },
     { name: "שרה לוי", phone: "0529876543", city: "תל אביב", sector: "כללי", familySize: 3, notes: "מתלבטת בין כמה מועמדים" },

@@ -248,6 +248,7 @@ async function runBackendIntegrationChecks() {
       });
       assert.equal(uploadA.status, 200);
       const projAId = uploadA.data.project.id;
+      const inviteTokenA = uploadA.data.project.inviteToken;
 
       const uploadB = await request(server.baseUrl, "POST", "/api/projects/upload", {
         headers: headersB,
@@ -255,6 +256,7 @@ async function runBackendIntegrationChecks() {
       });
       assert.equal(uploadB.status, 200);
       const projBId = uploadB.data.project.id;
+      const inviteTokenB = uploadB.data.project.inviteToken;
 
       const listA = await request(server.baseUrl, "GET", "/api/projects", { headers: headersA });
       assert.ok(listA.data.some((p) => p.id === projAId));
@@ -275,13 +277,13 @@ async function runBackendIntegrationChecks() {
 
       const phone = "0555555555";
       const loginA = await request(server.baseUrl, "POST", "/api/login", {
-        body: { name: "טלפן של א", phone, projectId: projAId }
+        body: { name: "טלפן של א", phone, passcode: "1234", inviteToken: inviteTokenA }
       });
       assert.equal(loginA.status, 200);
       assert.ok(loginA.data.projects.some((p) => p.id === projAId));
 
       const loginB = await request(server.baseUrl, "POST", "/api/login", {
-        body: { name: "טלפן של ב", phone, projectId: projBId }
+        body: { name: "טלפן של ב", phone, passcode: "1234", inviteToken: inviteTokenB }
       });
       assert.equal(loginB.status, 200);
       assert.ok(loginB.data.projects.some((p) => p.id === projBId));
@@ -290,15 +292,17 @@ async function runBackendIntegrationChecks() {
       return "multitenancy isolation verified successfully";
     });
     let projectId;
+    let projectInviteToken;
     const callers = [];
     await step("Upload contacts and register 30 callers", async () => {
       const upload = await request(server.baseUrl, "POST", "/api/projects/upload", { headers: adminHeaders, body: { projectName: "בדיקת עומס הקצאה", fileName: "contacts-test.json", contacts: makeContacts(45) } });
       assert.equal(upload.status, 200);
       assert.equal(upload.data.inserted, 45);
       projectId = upload.data.project.id;
+      projectInviteToken = upload.data.project.inviteToken;
       for (let index = 0; index < 30; index++) {
         const phone = "052" + String(8000000 + index).padStart(7, "0");
-        const login = await request(server.baseUrl, "POST", "/api/login", { body: { name: "טלפן בדיקה " + (index + 1), phone } });
+        const login = await request(server.baseUrl, "POST", "/api/login", { body: { name: "טלפן בדיקה " + (index + 1), phone, passcode: "1234", inviteToken: upload.data.project.inviteToken } });
         assert.equal(login.status, 200);
         callers.push({ id: login.data.id, phone });
         const assign = await request(server.baseUrl, "POST", "/api/projects/" + projectId + "/callers", { headers: adminHeaders, body: { phone } });
@@ -327,7 +331,7 @@ async function runBackendIntegrationChecks() {
     await step("Caller registers and joins a project independently via invite link", async () => {
       const invitePhone = "0539999999";
       const login = await request(server.baseUrl, "POST", "/api/login", {
-        body: { name: "טלפן הצטרפות עצמאית", phone: invitePhone, projectId }
+        body: { name: "טלפן הצטרפות עצמאית", phone: invitePhone, passcode: "1234", inviteToken: projectInviteToken }
       });
       assert.equal(login.status, 200);
       assert.ok(login.data.projects.some((p) => p.id === projectId), "caller should be linked to the invite project");
@@ -454,7 +458,7 @@ async function runBackendIntegrationChecks() {
       const projId = uploadC.data.project.id;
       
       const callerPhone = "0500000009";
-      const callerLogin = await request(server.baseUrl, "POST", "/api/login", { body: { name: "טלפן ג", phone: callerPhone, projectId: projId } });
+      const callerLogin = await request(server.baseUrl, "POST", "/api/login", { body: { name: "טלפן ג", phone: callerPhone, passcode: "1234", inviteToken: uploadC.data.project.inviteToken } });
       assert.equal(callerLogin.status, 200);
       
       const expireC = await request(server.baseUrl, "POST", "/api/admins/" + pendingC.id + "/approve", { 
@@ -463,7 +467,7 @@ async function runBackendIntegrationChecks() {
       });
       assert.equal(expireC.status, 200);
       
-      const callerLoginBlocked = await request(server.baseUrl, "POST", "/api/login", { body: { name: "טלפן ג", phone: callerPhone, projectId: projId } });
+      const callerLoginBlocked = await request(server.baseUrl, "POST", "/api/login", { body: { name: "טלפן ג", phone: callerPhone, passcode: "1234", inviteToken: uploadC.data.project.inviteToken } });
       assert.equal(callerLoginBlocked.status, 402);
       assert.equal(callerLoginBlocked.data.error, "license_expired");
       
@@ -529,7 +533,7 @@ async function runBackendIntegrationChecks() {
     await step("Rate limiting blocks brute-force login attempts", async () => {
       // The rate limit for login is 50 requests per windowMs.
       // We will make 51 requests to /api/login and verify the 51st returns 429.
-      const payload = { name: "טלפן ספאם", phone: "0501112222" };
+      const payload = { name: "טלפן ספאם", phone: "0501112222", passcode: "1234" };
       const headers = { "x-forwarded-for": "8.8.8.8" };
       for (let i = 0; i < 50; i++) {
         const res = await request(server.baseUrl, "POST", "/api/login", { body: payload, headers });
@@ -540,6 +544,54 @@ async function runBackendIntegrationChecks() {
       assert.equal(resBlocked.status, 429);
       assert.equal(resBlocked.data.error, "Too many requests, please try again later.");
       return "rate limiter blocked 51st attempt with 429";
+    });
+    await step("Verify caller passcode verification & invite token reset security", async () => {
+      const email = "admin-security-" + Date.now() + "@example.com";
+      const reg = await request(server.baseUrl, "POST", "/api/admins/register", { body: { fullName: "מנהל אבטחה", email, phone: "0509998888", organization: "מטה אבטחה", planId: "monthly" } });
+      const ownerList = await request(server.baseUrl, "GET", "/api/admins/registration-requests", { headers: adminHeaders });
+      const pendingAdmin = ownerList.data.find((item) => item.email === email);
+      const app = await request(server.baseUrl, "POST", "/api/admins/" + pendingAdmin.id + "/approve", { headers: adminHeaders });
+      const passcode = app.data.passcode;
+      const headers = { "x-admin-passcode": passcode };
+
+      // 1. Create project & obtain invite token
+      const upload = await request(server.baseUrl, "POST", "/api/projects/upload", { headers, body: { projectName: "פרויקט אבטחה", contacts: [] } });
+      assert.equal(upload.status, 200);
+      const inviteToken = upload.data.project.inviteToken;
+      const projectId = upload.data.project.id;
+      assert.ok(inviteToken.startsWith("inv_"));
+
+      // 2. Caller login with valid passcode & inviteToken
+      const phone = "0599998888";
+      const loginCorrect = await request(server.baseUrl, "POST", "/api/login", { body: { name: "טלפן אבטחה", phone, passcode: "pass1234", inviteToken } });
+      assert.equal(loginCorrect.status, 200);
+      assert.ok(loginCorrect.data.projects.some(p => p.id === projectId));
+
+      // 3. Caller login with WRONG passcode returns 401
+      const loginWrongPass = await request(server.baseUrl, "POST", "/api/login", { body: { name: "טלפן אבטחה", phone, passcode: "wrongpass", inviteToken } });
+      assert.equal(loginWrongPass.status, 401);
+
+      // 4. Join using an invalid invite token returns 400
+      const loginInvalidToken = await request(server.baseUrl, "POST", "/api/login", { body: { name: "טלפן חדש", phone: "0599998881", passcode: "pass1234", inviteToken: "inv_invalidtoken123" } });
+      assert.equal(loginInvalidToken.status, 400);
+
+      // 5. Reset invite token via admin endpoint
+      const resetRes = await request(server.baseUrl, "POST", "/api/projects/" + projectId + "/reset-invite-token", { headers });
+      assert.equal(resetRes.status, 200);
+      const newInviteToken = resetRes.data.inviteToken;
+      assert.ok(newInviteToken.startsWith("inv_"));
+      assert.notEqual(newInviteToken, inviteToken);
+
+      // 6. Old invite token is rejected
+      const loginOldToken = await request(server.baseUrl, "POST", "/api/login", { body: { name: "טלפן חדש", phone: "0599998881", passcode: "pass1234", inviteToken } });
+      assert.equal(loginOldToken.status, 400);
+
+      // 7. New invite token is accepted
+      const loginNewToken = await request(server.baseUrl, "POST", "/api/login", { body: { name: "טלפן חדש", phone: "0599998881", passcode: "pass1234", inviteToken: newInviteToken } });
+      assert.equal(loginNewToken.status, 200);
+      assert.ok(loginNewToken.data.projects.some(p => p.id === projectId));
+
+      return "passcode and invite token security verified successfully";
     });
   } finally {
     await step("Stop isolated backend test server", async () => { await server.stop(); return "temporary database removed"; });

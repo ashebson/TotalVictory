@@ -12,7 +12,7 @@ const CALLER_URL = window.location.origin.replace(/\/$/, "");
 type Tab = "dashboard" | "projects" | "settings";
 type Summary = { total: number; pending: number; success: number; notInterested: number; noAnswer: number; invalidNumber: number; totalCalled: number };
 type Caller = { id: number; name: string; phone?: string; totalCalls?: number; successCalls?: number; successRate?: number; lastCallTime?: string | null; projects?: Project[] };
-type Project = { id: number; name: string; sourceFileName?: string | null; createdAt: string; stats: Summary; callers: Caller[]; archived?: boolean };
+type Project = { id: number; name: string; sourceFileName?: string | null; createdAt: string; stats: Summary; callers: Caller[]; archived?: boolean; inviteToken?: string };
 type CallStatusOption = { id: string; label: string; active: boolean; className: string };
 type AdminRequest = { id: number; fullName: string; email: string; phone: string; organization: string; status: string; createdAt: string; approvedAt?: string | null; passcode?: string; subscriptions?: { planId?: string; status?: string; expiresAt?: string }[] };
 
@@ -351,11 +351,30 @@ function AdminApp() {
     }
   };
 
+  const resetInviteToken = async (project: Project) => {
+    const approved = window.confirm("לאפס את קישור ההצטרפות של הפרויקט '" + project.name + "'? קישורי ההצטרפות הקודמים יבוטלו מיידית!");
+    if (!approved) return;
+    setLoading(true);
+    try {
+      const res = await fetch(API_URL + "/api/projects/" + project.id + "/reset-invite-token", { method: "POST", headers: getAdminHeaders() });
+      if (res.ok) {
+        alert("קישור ההצטרפות אופס בהצלחה!");
+        fetchData();
+      } else {
+        alert("שגיאה באיפוס קישור ההצטרפות.");
+      }
+    } catch {
+      alert("שגיאה בתקשורת עם השרת.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const seedDemo = async () => { setLoading(true); try { await fetch(API_URL + "/api/contacts/seed", { method: "POST", headers: getAdminHeaders() }); fetchData(); } finally { setLoading(false); } };
 
   const csvExportUrl = (project: Project) => API_URL + "/api/projects/" + project.id + "/export.csv?passcode=" + encodeURIComponent(sessionStorage.getItem("admin_passcode") || passcode);
   const xlsxExportUrl = (project: Project) => API_URL + "/api/projects/" + project.id + "/export.xlsx?passcode=" + encodeURIComponent(sessionStorage.getItem("admin_passcode") || passcode);
-  const callerJoinUrl = (project: Project) => CALLER_URL + "?caller=1&projectId=" + project.id;
+  const callerJoinUrl = (project: Project) => CALLER_URL + "?caller=1&invite=" + (project.inviteToken || "");
 
   const approveAdminRequest = async (request: AdminRequest, expiresAt?: string) => {
     const approved = window.confirm("לאשר את " + request.fullName + " כמנהל פעיל וליצור לו קוד גישה?");
@@ -666,7 +685,7 @@ function AdminApp() {
                 <section className="project-card" key={project.id}>
                   <div className="project-card-header"><div><h2>{project.name}</h2><span>{project.sourceFileName || "קובץ מקומי"}</span></div><div className="project-card-actions"><strong>{project.stats.total} רשומות</strong><button type="button" onClick={() => deleteProject(project)}>העבר לארכיון</button></div></div>
                   <div className="project-stats-row"><span>ממתינים: {project.stats.pending}</span><span>בוצעו: {project.stats.totalCalled}</span><span>הצלחות: {project.stats.success}</span></div>
-                  <div className="sheet-link-box"><div className="sheet-actions"><a href={csvExportUrl(project)} target="_blank" rel="noreferrer">פתח CSV מתעדכן</a><a href={xlsxExportUrl(project)} target="_blank" rel="noreferrer">הורד XLSX מתעדכן</a><button type="button" onClick={() => navigator.clipboard.writeText(callerJoinUrl(project))}>העתק קישור הצטרפות לטלפנים</button></div><small>{callerJoinUrl(project)}</small></div>
+                  <div className="sheet-link-box"><div className="sheet-actions"><a href={csvExportUrl(project)} target="_blank" rel="noreferrer">פתח CSV מתעדכן</a><a href={xlsxExportUrl(project)} target="_blank" rel="noreferrer">הורד XLSX מתעדכן</a><button type="button" onClick={() => navigator.clipboard.writeText(callerJoinUrl(project))}>העתק קישור הצטרפות לטלפנים</button><button type="button" className="danger-button" onClick={() => resetInviteToken(project)} style={{ display: "inline-flex", alignItems: "center", justifySelf: "flex-end", background: "rgba(255, 75, 75, 0.15)", color: "#ff4b4b", border: "1px solid rgba(255, 75, 75, 0.3)", borderRadius: "6px", cursor: "pointer", fontSize: "14px", padding: "6px 12px", transition: "all 0.2s" }}>אפס קישור</button></div><small>{callerJoinUrl(project)}</small></div>
                   <div className="assign-box"><label>שיוך טלפן לפרויקט לפי מספר טלפון בלבד</label><div className="assign-row assign-row-wide"><input value={callerPhoneInputs[project.id] || ""} onChange={(e) => setCallerPhoneInputs((prev) => ({ ...prev, [project.id]: e.target.value }))} placeholder="מספר טלפון של הטלפן" /><button type="button" onClick={() => assignCaller(project.id)} disabled={loading || !callerPhoneInputs[project.id]?.trim()}>שייך</button></div></div>
                   <div className="caller-chip-list">{project.callers.length === 0 ? <span className="muted-text">אין טלפנים משויכים</span> : project.callers.map((caller) => <button key={caller.id} type="button" className="caller-chip" onClick={() => unassignCaller(project.id, caller.id)} title="הסר שיוך">{caller.name || "טרם הזדהה"} · {caller.phone} ×</button>)}</div>
                 </section>

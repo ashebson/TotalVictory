@@ -28,6 +28,14 @@ const mockStatuses = [
 export default function LandingPage({ onLogin, onRegister }: LandingPageProps) {
   const [mockCalls, setMockCalls] = useState<MockCall[]>([]);
   const [activeCallersCount, setActiveCallersCount] = useState(32);
+  const [simStep, setSimStep] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setSimStep((prev) => (prev + 1) % 5);
+    }, 4000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Generate initial mock calls
   useEffect(() => {
@@ -295,6 +303,100 @@ export default function LandingPage({ onLogin, onRegister }: LandingPageProps) {
                     </div>
                   </div>
                 </main>
+              </div>
+            </div>
+
+            {/* Simulated Smartphone Overlay */}
+            <div className="sim-phone-wrapper">
+              <div className="sim-phone-device">
+                <div className="sim-phone-notch"></div>
+                <div className="sim-phone-screen">
+                  {/* Status Bar */}
+                  <div className="phone-status-bar">
+                    <span>9:41</span>
+                    <span className="phone-icons">📶 📶 🔋</span>
+                  </div>
+
+                  {/* App Header */}
+                  <div className="phone-app-header">
+                    <span className="phone-app-logo">🏆 DVictory</span>
+                    <span className="phone-project-title">ירושלים - מתפקדים</span>
+                  </div>
+
+                  {/* App Stats Bar */}
+                  <div className="phone-stats-bar">
+                    <span>ממתינים: 242</span>
+                    <span>בוצעו: 58</span>
+                    <span>הצלחה: 41</span>
+                  </div>
+
+                  {/* Phone Screen Main Area */}
+                  <div className="phone-app-body">
+                    {simStep === 4 ? (
+                      <div className="phone-loading-state">
+                        <div className="phone-spinner"></div>
+                        <p>שומר שיחה ומקצה בוחר חדש...</p>
+                      </div>
+                    ) : (
+                      <>
+                        {/* Contact Card */}
+                        <div className="phone-contact-card">
+                          <span className="card-label">בוחר לטיפול:</span>
+                          <h4 className="phone-contact-name">שמעון אלקבץ</h4>
+                          <div className="phone-contact-meta">ירושלים • דתי לאומי • 4 נפשות</div>
+                          <div className="phone-contact-notes">
+                            <strong>הערות מנהל:</strong> תומך ותיק של התנועה. לדבר איתו על הסעות לקלפי.
+                          </div>
+                        </div>
+
+                        {/* Action State */}
+                        <div className="phone-action-container">
+                          {simStep === 0 && (
+                            <button className="phone-btn-call pulse-btn">
+                              📞 חיוג לבוחר
+                            </button>
+                          )}
+
+                          {simStep === 1 && (
+                            <div className="phone-calling-state">
+                              <div className="calling-animation">
+                                <div className="pulse-ring"></div>
+                                <div className="pulse-ring-2"></div>
+                                <div className="caller-avatar">ש</div>
+                              </div>
+                              <p className="calling-text">מתקשר אל שמעון אלקבץ...</p>
+                              <button className="phone-btn-hangup">נתק</button>
+                            </div>
+                          )}
+
+                          {simStep === 2 && (
+                            <div className="phone-feedback-selectors">
+                              <span className="selectors-title">בחר תוצאת שיחה:</span>
+                              <div className="selectors-grid">
+                                <button className="sel-btn success active-pulse">ענה ותומך 👍</button>
+                                <button className="sel-btn info">אין מענה ⏳</button>
+                                <button className="sel-btn warning">לא מעוניין ❌</button>
+                                <button className="sel-btn danger">שגוי/לא מחובר ⚠️</button>
+                              </div>
+                            </div>
+                          )}
+
+                          {simStep === 3 && (
+                            <div className="phone-followup-state">
+                              <div className="phone-status-badge success">ענה ותומך 👍</div>
+                              <button className="phone-btn-whatsapp active-pulse">
+                                💬 שלח הודעת וואטסאפ לחיזוק
+                              </button>
+                              <small className="wa-template-preview">
+                                "שלום שמעון, שמחנו לשוחח איתך..."
+                              </small>
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           </div>

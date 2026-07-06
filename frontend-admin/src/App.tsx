@@ -129,6 +129,7 @@ function AdminApp() {
   const [adminRequests, setAdminRequests] = useState<AdminRequest[]>([]);
   const [adminRequestsError, setAdminRequestsError] = useState("");
   const [approvedAdmin, setApprovedAdmin] = useState<{ name: string; passcode: string; whatsappUrl?: string } | null>(null);
+  const [resetModalData, setResetModalData] = useState<{ passcode: string; whatsappUrl: string; adminName: string } | null>(null);
 
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const [summary, setSummary] = useState<Summary>(emptySummary);
@@ -225,6 +226,7 @@ function AdminApp() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setPasscodeError(false);
+    setLoading(true);
     try {
       const res = await fetch(API_URL + "/api/admins/validate", {
         method: "POST",
@@ -233,12 +235,39 @@ function AdminApp() {
       });
       if (!res.ok) throw new Error("invalid");
       const data = await res.json();
-      setIsAuthenticated(true);
+      
       sessionStorage.setItem("admin_authenticated", "true");
       sessionStorage.setItem("admin_passcode", passcode);
       setIsExpired(!!data.isExpired);
+
+      // Pre-fetch dashboard data
+      const headers = { "x-admin-passcode": passcode };
+      const statsRes = await fetch(API_URL + "/api/stats/admin", { headers });
+      if (statsRes.ok) {
+        const statsData = await statsRes.json();
+        setSummary(statsData.summary || emptySummary);
+        setCallers(statsData.callers || []);
+        setProjects(statsData.projects || []);
+        setRecentCalls(statsData.recentCalls || []);
+      }
+      
+      const settingsRes = await fetch(API_URL + "/api/settings", { headers });
+      if (settingsRes.ok) {
+        const settingsData = await settingsRes.json();
+        setSettings({
+          campaign_name: settingsData.campaign_name || "מטה טלפנים דיגיטלי",
+          target_calls: settingsData.target_calls || "5000",
+          whatsapp_template: settingsData.whatsapp_template || "",
+          campaign_timeline_active: settingsData.campaign_timeline_active || "false",
+          campaign_end_date: settingsData.campaign_end_date || ""
+        });
+      }
+
+      setIsAuthenticated(true);
     } catch {
       setPasscodeError(true);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -418,6 +447,25 @@ function AdminApp() {
     }
   };
 
+  const resetAdminPasscode = async (adminId: number, adminName: string) => {
+    if (!window.confirm("האם אתה בטוח שברצונך לאפס את קוד הגישה עבור " + adminName + "?\nקוד הגישה הנוכחי יבוטל מיידית!")) return;
+    setLoading(true);
+    try {
+      const res = await fetch(API_URL + "/api/admins/" + adminId + "/reset-passcode", {
+        method: "POST",
+        headers: getAdminHeaders({ "Content-Type": "application/json" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "reset failed");
+      setResetModalData({ passcode: data.passcode, whatsappUrl: data.whatsappUrl, adminName });
+      fetchAdminRequests();
+    } catch (err: any) {
+      alert("שגיאה באיפוס קוד הגישה: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -509,7 +557,7 @@ function AdminApp() {
                 </div>
                 {passcodeError && <div className="error-banner">קוד גישה שגוי, נסה שנית.</div>}
                 <div className="input-group"><label htmlFor="passcode">קוד גישה מנהל</label><input id="passcode" type="password" placeholder="הכנס קוד גישה..." value={passcode} onChange={(e) => setPasscode(e.target.value)} required /></div>
-                <button type="submit" className="btn-primary">כניסה לניהול</button>
+                <button type="submit" className="btn-primary" disabled={loading}>{loading ? "מתחבר..." : "כניסה לניהול"}</button>
               </form>
             ) : (
               <form className="auth-form" onSubmit={handleRegisterAdmin}>
@@ -732,6 +780,21 @@ function AdminApp() {
                     </div>
                   )}
                   
+                  {resetModalData && (
+                    <div className="result-banner success" style={{ background: "rgba(255, 193, 7, 0.15)", border: "1px solid rgba(255, 193, 7, 0.3)", position: "relative" }}>
+                      <button type="button" onClick={() => setResetModalData(null)} style={{ position: "absolute", left: "10px", top: "10px", background: "none", border: "none", color: "white", cursor: "pointer", fontSize: "16px" }}>×</button>
+                      <strong style={{ color: "#ffc107" }}>קוד גישה חדש עבור {resetModalData.adminName} נוצר בהצלחה!</strong>
+                      <div style={{ marginTop: "8px" }}>קוד גישה חדש: <b style={{ fontSize: "16px", color: "white", background: "rgba(0,0,0,0.3)", padding: "4px 8px", borderRadius: "4px" }}>{resetModalData.passcode}</b></div>
+                      {resetModalData.whatsappUrl && (
+                        <div style={{ marginTop: "10px" }}>
+                          <a href={resetModalData.whatsappUrl} target="_blank" rel="noreferrer" className="btn-whatsapp-share" style={{ display: "inline-block", backgroundColor: "#25d366", color: "white", padding: "6px 12px", borderRadius: "4px", textDecoration: "none", fontSize: "13px", fontWeight: "bold" }}>
+                            💬 שלח קוד חדש למנהל בוואטסאפ
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
                   {adminRequestsError && <div className="error-banner">{adminRequestsError}</div>}
                   
                   <div className="owner-management-tabs" style={{ marginTop: "15px" }}>
@@ -801,7 +864,11 @@ function AdminApp() {
                                     {request.organization} · {request.phone} · {request.email}
                                   </span>
                                   <small style={{ display: "block", color: "#a0a0a0", marginTop: "4px" }}>
-                                    קוד גישה: <b style={{ color: "#ffc107", cursor: "pointer" }} onClick={() => { navigator.clipboard.writeText(request.passcode || ""); alert("קוד הגישה הועתק!"); }} title="לחץ להעתקה">{request.passcode || "-"} (לחץ להעתקה)</b> · אישור: {request.approvedAt ? new Date(request.approvedAt).toLocaleDateString("he-IL") : "-"}
+                                    קוד גישה: {request.passcode ? (
+                                      <b style={{ color: "#ffc107", cursor: "pointer" }} onClick={() => { navigator.clipboard.writeText(request.passcode || ""); alert("קוד הגישה הועתק!"); }} title="לחץ להעתקה">{request.passcode} (לחץ להעתקה)</b>
+                                    ) : (
+                                      <span style={{ color: "#888", fontStyle: "italic" }}>מוצפן ומאובטח (SHA-256)</span>
+                                    )} · אישור: {request.approvedAt ? new Date(request.approvedAt).toLocaleDateString("he-IL") : "-"}
                                   </small>
                                 </div>
                                 <div style={{ display: "flex", flexDirection: "column", gap: "8px", alignItems: "flex-end" }}>
@@ -809,12 +876,15 @@ function AdminApp() {
                                     <label style={{ fontSize: "12px", color: "#a0a0a0" }}>תאריך תפוגה:</label>
                                     <input type="date" id={`expiry-edit-${request.id}`} defaultValue={currentExpiry} style={{ background: "#252535", color: "white", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", padding: "4px 8px", fontSize: "12px" }} />
                                   </div>
-                                  <button type="button" className="btn-secondary" style={{ padding: "6px 12px", fontSize: "12px", backgroundColor: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "white" }} onClick={() => {
-                                    const input = document.getElementById(`expiry-edit-${request.id}`) as HTMLInputElement | null;
-                                    if (input?.value) {
-                                      updateAdminExpiry(request.id, input.value);
-                                    }
-                                  }} disabled={loading}>עדכן תפוגה</button>
+                                  <div style={{ display: "flex", gap: "8px" }}>
+                                    <button type="button" className="btn-secondary" style={{ padding: "6px 12px", fontSize: "12px", backgroundColor: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "white" }} onClick={() => {
+                                      const input = document.getElementById(`expiry-edit-${request.id}`) as HTMLInputElement | null;
+                                      if (input?.value) {
+                                        updateAdminExpiry(request.id, input.value);
+                                      }
+                                    }} disabled={loading}>עדכן תפוגה</button>
+                                    <button type="button" className="btn-secondary" style={{ padding: "6px 12px", fontSize: "12px", backgroundColor: "rgba(255, 77, 79, 0.1)", border: "1px solid rgba(255, 77, 79, 0.2)", color: "#ff4d4f" }} onClick={() => resetAdminPasscode(request.id, request.fullName)} disabled={loading}>אפס סיסמה</button>
+                                  </div>
                                 </div>
                               </div>
                             );

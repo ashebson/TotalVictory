@@ -95,6 +95,10 @@ function generateInviteToken(): string {
   return "inv_" + crypto.randomBytes(16).toString("hex");
 }
 
+function hashAdminPasscode(passcode: string): string {
+  return crypto.createHash("sha256").update(passcode).digest("hex");
+}
+
 // --- Settings Cache (DB-First with Delta Sync) ---
 const settingsCache = new Map<string, string>();
 let settingsCacheLastSync = new Date(0);
@@ -364,6 +368,36 @@ function isExpiredAdmin(adminId: number): boolean {
   return new Date(sub.expiresAt).getTime() < Date.now();
 }
 
+async function findAndUpgradeAdmin(inputPasscode: string): Promise<any | null> {
+  const hash = hashAdminPasscode(inputPasscode);
+  if (prisma) {
+    let admin = await prisma.admin.findFirst({ where: { passcodeHash: hash, status: "ACTIVE" } });
+    if (admin) return admin;
+    
+    admin = await prisma.admin.findFirst({ where: { passcode: inputPasscode, status: "ACTIVE" } });
+    if (admin) {
+      await prisma.admin.update({
+        where: { id: admin.id },
+        data: { passcodeHash: hash, passcode: null }
+      });
+      admin.passcodeHash = hash;
+      admin.passcode = null;
+      return admin;
+    }
+  } else {
+    let admin = memory.admins.find((item) => item.passcodeHash === hash && item.status === "ACTIVE");
+    if (admin) return admin;
+    
+    admin = memory.admins.find((item) => item.passcode === inputPasscode && item.status === "ACTIVE");
+    if (admin) {
+      admin.passcodeHash = hash;
+      admin.passcode = null;
+      return admin;
+    }
+  }
+  return null;
+}
+
 async function authenticateAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
   const authHeader = req.headers.authorization;
   const customHeader = req.headers["x-admin-passcode"];
@@ -377,14 +411,13 @@ async function authenticateAdmin(req: express.Request, res: express.Response, ne
     return res.status(401).json({ error: "Admin passcode is required" });
   }
   
-  if (passcode === "halevi2026") {
+  const ownerPasscode = process.env.OWNER_PASSCODE || "halevi2026";
+  if (passcode === ownerPasscode) {
     (req as any).adminId = 1;
     return next();
   }
   
-  const admin = prisma
-    ? await prisma.admin.findFirst({ where: { passcode, status: "ACTIVE" } })
-    : memory.admins.find((item) => item.passcode === passcode && item.status === "ACTIVE");
+  const admin = await findAndUpgradeAdmin(passcode);
   if (!admin) {
     return res.status(401).json({ error: "Invalid or inactive admin passcode" });
   }
@@ -1098,7 +1131,18 @@ async function deleteCallerProject(callerId: number, projectId: number) {
 
 async function persistAdminRecord(admin: any) {
   if (!prisma) return saveMemoryStore();
-  const data = { id: Number(admin.id), fullName: admin.fullName || "", email: admin.email || "", phone: cleanPhone(admin.phone), organization: admin.organization || "", passcode: admin.passcode || generatePasscode(), status: admin.status || "PENDING", createdAt: new Date(admin.createdAt || Date.now()), approvedAt: admin.approvedAt ? new Date(admin.approvedAt) : null };
+  const data = { 
+    id: Number(admin.id), 
+    fullName: admin.fullName || "", 
+    email: admin.email || "", 
+    phone: cleanPhone(admin.phone), 
+    organization: admin.organization || "", 
+    passcode: admin.passcode || null, 
+    passcodeHash: admin.passcodeHash || null,
+    status: admin.status || "PENDING", 
+    createdAt: new Date(admin.createdAt || Date.now()), 
+    approvedAt: admin.approvedAt ? new Date(admin.approvedAt) : null 
+  };
   await prisma.admin.upsert({ where: { id: data.id }, update: data, create: data });
 }
 
@@ -1473,9 +1517,7 @@ app.post("/api/admins/validate", rateLimiter(50, 60000), async (req, res) => {
     const passcode = String(req.body.passcode || "");
     const ownerPasscode = process.env.OWNER_PASSCODE || "halevi2026";
     if (passcode === ownerPasscode) return res.json({ success: true, admin: { id: 0, fullName: "מנהל ראשי", planId: "legacy" } });
-    const admin = prisma
-      ? await prisma.admin.findFirst({ where: { passcode, status: "ACTIVE" } })
-      : memory.admins.find((item) => item.passcode === passcode && item.status === "ACTIVE");
+    const admin = await findAndUpgradeAdmin(passcode);
     if (!admin) return res.status(401).json({ success: false, error: "Invalid passcode" });
     res.json({ success: true, admin: publicAdmin(admin), isExpired: isExpiredAdmin(admin.id) });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
@@ -1565,7 +1607,9 @@ app.post("/api/admins/:adminId/approve", authenticateOwner, async (req, res) => 
     }
     
     admin.status = "ACTIVE";
-    if (!admin.passcode) admin.passcode = generatePasscode();
+    const passcode = admin.passcode || generatePasscode();
+    admin.passcodeHash = hashAdminPasscode(passcode);
+    admin.passcode = prisma ? null : passcode;
     admin.approvedAt = admin.approvedAt || new Date().toISOString();
     const subscription = [...memory.subscriptions].reverse().find((item) => item.adminId === admin.id);
     if (subscription) {
@@ -1606,7 +1650,7 @@ app.post("/api/admins/:adminId/approve", authenticateOwner, async (req, res) => 
     
     await persistAdminRecord(admin);
     if (subscription) await persistSubscriptionRecord(subscription);
-    res.json({ success: true, admin: publicAdmin(admin), passcode: admin.passcode, whatsappUrl: buildPasscodeWhatsAppUrl(admin) });
+    res.json({ success: true, admin: publicAdmin(admin), passcode, whatsappUrl: buildPasscodeWhatsAppUrl({ ...admin, passcode }) });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
@@ -1643,6 +1687,31 @@ app.post("/api/admins/:adminId/update-expiry", authenticateOwner, async (req, re
 
     await persistSubscriptionRecord(sub);
     res.json({ success: true, expiresAt: expiresAtStr });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/admins/:adminId/reset-passcode", authenticateOwner, async (req, res) => {
+  try {
+    const adminId = Number(req.params.adminId);
+    let admin = memory.admins.find((item) => item.id === adminId);
+    if (!admin && prisma) {
+      admin = await prisma.admin.findUnique({ where: { id: adminId } });
+    }
+    if (!admin) return res.status(404).json({ error: "Admin not found" });
+
+    const passcode = generatePasscode();
+    admin.passcodeHash = hashAdminPasscode(passcode);
+    admin.passcode = prisma ? null : passcode;
+
+    await persistAdminRecord(admin);
+
+    res.json({ 
+      success: true, 
+      passcode, 
+      whatsappUrl: buildPasscodeWhatsAppUrl({ ...admin, passcode }) 
+    });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -1977,10 +2046,21 @@ async function resolveAdminId(req: express.Request): Promise<number> {
   const passcode = typeof customHeader === "string" ? customHeader : String(req.query.passcode || "");
   const ownerPasscode = process.env.OWNER_PASSCODE || "halevi2026";
   if (passcode === ownerPasscode) return 1;
-  const admin = prisma
-    ? await prisma.admin.findFirst({ where: { passcode, status: "ACTIVE" } })
-    : memory.admins.find((item) => item.passcode === passcode && item.status === "ACTIVE");
-  if (admin) return admin.id;
+  if (passcode) {
+    const hash = hashAdminPasscode(passcode);
+    const admin = prisma
+      ? await prisma.admin.findFirst({
+          where: {
+            OR: [
+              { passcodeHash: hash },
+              { passcode: passcode }
+            ],
+            status: "ACTIVE"
+          }
+        })
+      : memory.admins.find((item) => (item.passcodeHash === hash || item.passcode === passcode) && item.status === "ACTIVE");
+    if (admin) return admin.id;
+  }
 
   const authHeader = req.headers.authorization;
   const callerId = Number(authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : undefined);

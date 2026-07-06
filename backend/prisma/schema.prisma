@@ -105,7 +105,8 @@ model Admin {
   email         String         @unique
   phone         String         @unique
   organization  String
-  passcode      String         @unique
+  passcode      String?
+  passcodeHash   String?         @unique
   status        String         @default("ACTIVE")
   createdAt     DateTime       @default(now())
   approvedAt    DateTime?

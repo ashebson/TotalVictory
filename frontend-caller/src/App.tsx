@@ -25,7 +25,7 @@ function CallerCountdown({ endDateStr }: { endDateStr: string }) {
       const pad = (n: number) => String(n).padStart(2, "0");
       
       if (days > 0) {
-        setTimeLeft(`סיום הקמפיין: ${days} ימים ו-${pad(hours)}:${pad(minutes)}:${pad(seconds)}`);
+        setTimeLeft(`סיום הקמפיין: ${days} ימים | ${pad(hours)}:${pad(minutes)}:${pad(seconds)}`);
       } else {
         setTimeLeft(`סיום הקמפיין: ${pad(hours)}:${pad(minutes)}:${pad(seconds)}`);
       }

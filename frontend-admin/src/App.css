@@ -1544,6 +1544,8 @@
   gap: 16px;
   align-items: center;
   flex-wrap: wrap;
+  direction: ltr;
+  justify-content: flex-end;
 }
 
 .countdown-digit-card {

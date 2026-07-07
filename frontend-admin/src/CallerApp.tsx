@@ -8,27 +8,22 @@ const API_URL = (import.meta.env.VITE_API_URL || (window.location.hostname === "
 const DEFAULT_WHATSAPP_TEMPLATE = "שלום {שם פרטי}, דיברנו עכשיו בטלפון. נשמח לתמיכתך במועמד/ת במסגרת מערכת הבחירות. ביחד נצליח!";
 
 function CallerCountdown({ endDateStr }: { endDateStr: string }) {
-  const [timeLeft, setTimeLeft] = useState("");
+  const [timeLeft, setTimeLeft] = useState<{ days: number; hours: number; minutes: number; seconds: number; ended: boolean }>({ days: 0, hours: 0, minutes: 0, seconds: 0, ended: false });
 
   useEffect(() => {
     const calculateTime = () => {
       const difference = +new Date(endDateStr) - +new Date();
       if (difference <= 0) {
-        setTimeLeft("הקמפיין הסתיים");
+        setTimeLeft({ days: 0, hours: 0, minutes: 0, seconds: 0, ended: true });
         return;
       }
-      const days = Math.floor(difference / (1000 * 60 * 60 * 24));
-      const hours = Math.floor((difference / (1000 * 60 * 60)) % 24);
-      const minutes = Math.floor((difference / 1000 / 60) % 60);
-      const seconds = Math.floor((difference / 1000) % 60);
-      
-      const pad = (n: number) => String(n).padStart(2, "0");
-      
-      if (days > 0) {
-        setTimeLeft(`סיום הקמפיין: ${days} ימים | ${pad(hours)}:${pad(minutes)}:${pad(seconds)}`);
-      } else {
-        setTimeLeft(`סיום הקמפיין: ${pad(hours)}:${pad(minutes)}:${pad(seconds)}`);
-      }
+      setTimeLeft({
+        days: Math.floor(difference / (1000 * 60 * 60 * 24)),
+        hours: Math.floor((difference / (1000 * 60 * 60)) % 24),
+        minutes: Math.floor((difference / 1000 / 60) % 60),
+        seconds: Math.floor((difference / 1000) % 60),
+        ended: false
+      });
     };
 
     calculateTime();
@@ -36,7 +31,23 @@ function CallerCountdown({ endDateStr }: { endDateStr: string }) {
     return () => clearInterval(interval);
   }, [endDateStr]);
 
-  return <span className="timeline-text">⏰ {timeLeft}</span>;
+  if (timeLeft.ended) {
+    return <span className="timeline-ended-label">🏁 הקמפיין הסתיים</span>;
+  }
+
+  const pad = (n: number) => String(n).padStart(2, "0");
+
+  return (
+    <div className="caller-timeline-compact">
+      <span className="timeline-label">🏁 סיום הקמפיין</span>
+      {timeLeft.days > 0 && (
+        <span className="timeline-days-badge">{timeLeft.days} ימים</span>
+      )}
+      <span className="timeline-clock-badge">
+        {pad(timeLeft.hours)}:{pad(timeLeft.minutes)}:{pad(timeLeft.seconds)}
+      </span>
+    </div>
+  );
 }
 
 type Project = {

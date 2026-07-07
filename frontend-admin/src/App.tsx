@@ -64,19 +64,26 @@ function CampaignCountdown({ endDateStr }: { endDateStr: string }) {
     title = "⚠️ היום האחרון לקמפיין! מגבירים קצב!";
   }
 
+  // Calculate elapsed progress for the visual timeline track
+  // We assume a dynamic scale of 7 days or more depending on how much time is left.
+  const difference = +new Date(endDateStr) - +new Date();
+  const scaleDays = Math.max(7, timeLeft.days + 1);
+  const scaleMs = scaleDays * 24 * 60 * 60 * 1000;
+  const elapsedPercent = Math.max(0, Math.min(100, 100 - (difference / scaleMs) * 100));
+
   return (
     <div className={`campaign-timeline-card timeline-glass-panel ${cardClass}`}>
       <div className="timeline-header">
         <h3 className="timeline-title">
-          <span>🏁</span> {title}
+          <span className="timeline-title-icon">🏁</span> {title}
         </h3>
         <div className="timeline-end-date-badge">
-          ⏰ מועד סיום: {new Date(endDateStr).toLocaleString("he-IL")}
+          ⏰ יעד סיום: {new Date(endDateStr).toLocaleString("he-IL")}
         </div>
       </div>
       
       {timeLeft.ended ? (
-        <div style={{ fontSize: "24px", fontWeight: "bold", color: "#ff4d4f", textAlign: "center", padding: "15px 0" }}>הקמפיין הגיע לסיומו הרשמי! 🏁</div>
+        <div className="timeline-ended-display">הקמפיין הגיע לסיומו הרשמי! 🏁</div>
       ) : (
         <>
           <div className="countdown-widget-container">
@@ -97,8 +104,18 @@ function CampaignCountdown({ endDateStr }: { endDateStr: string }) {
               <span className="countdown-digit-label">שניות</span>
             </div>
           </div>
-          <div className="timeline-status-bar-container">
-            <div className="timeline-status-bar-fill"></div>
+          
+          {/* Beautiful interactive horizontal timeline graph */}
+          <div className="timeline-visual-map">
+            <span className="timeline-visual-endpoint start">התחלת קמפיין</span>
+            <div className="timeline-visual-track">
+              <div className="timeline-visual-progress" style={{ width: `${elapsedPercent}%` }}></div>
+              <div className="timeline-visual-node" style={{ right: `${elapsedPercent}%` }}>
+                <span className="timeline-visual-pulse"></span>
+                <span className="timeline-visual-tooltip">עכשיו</span>
+              </div>
+            </div>
+            <span className="timeline-visual-endpoint end">מועד סיום</span>
           </div>
         </>
       )}

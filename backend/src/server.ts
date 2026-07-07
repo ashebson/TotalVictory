@@ -1004,7 +1004,20 @@ async function serializeProjectAsync(project: any) {
   return { ...project, inviteToken, archived: isProjectArchived(project.id), stats, callers };
 }
 
-function getCallerProjects(callerId: number) {
+async function getCallerProjects(callerId: number) {
+  if (prisma) {
+    const links = await prisma.callerProject.findMany({ where: { callerId } });
+    const projectIds = links.map((l) => l.projectId);
+    const dbProjects = await prisma.project.findMany({
+      where: { id: { in: projectIds } }
+    });
+    const active = dbProjects.filter((p) => !isProjectArchived(p.id));
+    const serialized = [];
+    for (const p of active) {
+      serialized.push(await serializeProjectAsync(p));
+    }
+    return serialized;
+  }
   const projectIds = memory.callerProjects.filter((link) => link.callerId === callerId).map((link) => link.projectId);
   return activeProjects().filter((project) => projectIds.includes(project.id)).map(serializeProject);
 }
@@ -1517,7 +1530,7 @@ app.post("/api/login", rateLimiter(50, 60000), async (req, res) => {
     }
     
     broadcastStatsUpdate(adminId);
-    res.json({ ...existingCaller, projects: getCallerProjects(existingCaller.id) });
+    res.json({ ...existingCaller, projects: await getCallerProjects(existingCaller.id) });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
@@ -1772,7 +1785,7 @@ app.get("/api/callers", authenticateAdmin, async (req, res) => {
       return res.json(result);
     }
     const callers = memory.callers.filter((caller) => caller.adminId === adminId);
-    res.json(callers.map((caller) => ({ ...caller, projects: getCallerProjects(caller.id) })));
+    res.json(await Promise.all(callers.map(async (caller) => ({ ...caller, projects: await getCallerProjects(caller.id) }))));
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 app.get("/api/callers/:callerId/projects", authenticateCaller, async (req, res) => {
@@ -1786,7 +1799,7 @@ app.get("/api/callers/:callerId/projects", authenticateCaller, async (req, res) 
       const serialized = await Promise.all(activeCallerProjects.map((p) => serializeProjectAsync(p)));
       return res.json(serialized);
     }
-    res.json(getCallerProjects(callerId));
+    res.json(await getCallerProjects(callerId));
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
@@ -2177,14 +2190,13 @@ app.get("/api/stats/admin", authenticateAdmin, async (req, res) => {
         timestamp: log.timestamp,
       }));
     } else {
-      callers = memory.callers
-        .filter((caller) => caller.adminId === adminId)
-        .map((caller) => {
-          const logs = memory.callLogs.filter((log) => log.callerId === caller.id);
-          const successLogs = logs.filter((log) => log.status === "SUCCESS");
-          const lastLog = [...logs].sort((a, b) => Number(b.timestamp) - Number(a.timestamp))[0];
-          return { id: caller.id, name: caller.name, phone: caller.phone, totalCalls: logs.length, successCalls: successLogs.length, successRate: logs.length ? Math.round((successLogs.length / logs.length) * 100) : 0, lastCallTime: lastLog?.timestamp || null, projects: getCallerProjects(caller.id) };
-        });
+      const callersList = memory.callers.filter((caller) => caller.adminId === adminId);
+      callers = await Promise.all(callersList.map(async (caller) => {
+        const logs = memory.callLogs.filter((log) => log.callerId === caller.id);
+        const successLogs = logs.filter((log) => log.status === "SUCCESS");
+        const lastLog = [...logs].sort((a, b) => Number(b.timestamp) - Number(a.timestamp))[0];
+        return { id: caller.id, name: caller.name, phone: caller.phone, totalCalls: logs.length, successCalls: successLogs.length, successRate: logs.length ? Math.round((successLogs.length / logs.length) * 100) : 0, lastCallTime: lastLog?.timestamp || null, projects: await getCallerProjects(caller.id) };
+      }));
       projects = memory.projects.filter((p) => p.adminId === adminId).map(serializeProject);
 
       recentCalls = [...memory.callLogs]

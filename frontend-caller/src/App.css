@@ -878,3 +878,41 @@
   font-weight: 600;
   font-size: 0.88em;
 }
+
+/* Stats/Timeline top bar for caller app */
+.caller-top-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  background: rgba(59, 130, 246, 0.06);
+  border: 1px solid rgba(59, 130, 246, 0.15);
+  border-radius: 12px;
+  margin-bottom: 16px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #94a3b8;
+  direction: rtl;
+  gap: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.caller-top-stats strong {
+  color: #3b82f6;
+  font-size: 0.95rem;
+}
+
+.caller-top-timeline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #f59e0b;
+}
+
+.timeline-text {
+  background: rgba(245, 158, 11, 0.1);
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(245, 158, 11, 0.2);
+  display: inline-block;
+}

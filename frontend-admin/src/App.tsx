@@ -52,65 +52,55 @@ function CampaignCountdown({ endDateStr }: { endDateStr: string }) {
   
   let cardClass = "timeline-normal";
   let title = "זמן נותר לסיום הקמפיין";
-  let glowColor = "rgba(79, 110, 242, 0.2)";
-  let borderColor = "rgba(79, 110, 242, 0.4)";
   
   if (timeLeft.ended) {
     cardClass = "timeline-ended";
     title = "הקמפיין הסתיים";
-    glowColor = "rgba(255, 255, 255, 0.05)";
-    borderColor = "rgba(255, 255, 255, 0.1)";
   } else if (totalHoursLeft < 1) {
     cardClass = "timeline-critical pulse-danger";
     title = "⏰ שעה אחרונה לקמפיין! כל קול קובע!";
-    glowColor = "rgba(255, 77, 79, 0.4)";
-    borderColor = "rgba(255, 77, 79, 0.8)";
   } else if (timeLeft.days < 1) {
     cardClass = "timeline-warning pulse-warn";
     title = "⚠️ היום האחרון לקמפיין! מגבירים קצב!";
-    glowColor = "rgba(255, 193, 7, 0.3)";
-    borderColor = "rgba(255, 193, 7, 0.6)";
   }
 
   return (
-    <div className={`campaign-timeline-card ${cardClass}`} style={{
-      background: "rgba(25, 25, 35, 0.65)",
-      backdropFilter: "blur(12px)",
-      border: `1px solid ${borderColor}`,
-      borderRadius: "16px",
-      padding: "20px",
-      marginBottom: "25px",
-      boxShadow: `0 8px 32px ${glowColor}`,
-      textAlign: "right",
-      direction: "rtl"
-    }}>
-      <h3 style={{ margin: "0 0 15px 0", fontSize: "16px", color: timeLeft.ended ? "#a0a0a0" : "#ffffff", fontWeight: "600", display: "flex", alignItems: "center", gap: "8px" }}>
-        <span>📊</span> {title}
-      </h3>
-      {timeLeft.ended ? (
-        <div style={{ fontSize: "24px", fontWeight: "bold", color: "#ff4d4f" }}>הקמפיין הגיע לסיומו הרשמי! 🏁</div>
-      ) : (
-        <div className="countdown-display" style={{ display: "flex", gap: "20px", alignItems: "center", flexWrap: "wrap" }}>
-          <div className="countdown-item" style={{ background: "rgba(255,255,255,0.03)", padding: "10px 16px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.05)", minWidth: "80px", textAlign: "center" }}>
-            <span style={{ fontSize: "28px", fontWeight: "bold", display: "block", color: timeLeft.days === 0 ? "#ffc107" : "#4f6ef2" }}>{timeLeft.days}</span>
-            <span style={{ fontSize: "12px", color: "#a0a0a0" }}>ימים</span>
-          </div>
-          <div className="countdown-item" style={{ background: "rgba(255,255,255,0.03)", padding: "10px 16px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.05)", minWidth: "80px", textAlign: "center" }}>
-            <span style={{ fontSize: "28px", fontWeight: "bold", display: "block", color: totalHoursLeft < 24 ? "#ffc107" : "#4f6ef2" }}>{timeLeft.hours}</span>
-            <span style={{ fontSize: "12px", color: "#a0a0a0" }}>שעות</span>
-          </div>
-          <div className="countdown-item" style={{ background: "rgba(255,255,255,0.03)", padding: "10px 16px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.05)", minWidth: "80px", textAlign: "center" }}>
-            <span style={{ fontSize: "28px", fontWeight: "bold", display: "block", color: totalHoursLeft < 1 ? "#ff4d4f" : "#4f6ef2" }}>{timeLeft.minutes}</span>
-            <span style={{ fontSize: "12px", color: "#a0a0a0" }}>דקות</span>
-          </div>
-          <div className="countdown-item" style={{ background: "rgba(255,255,255,0.03)", padding: "10px 16px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.05)", minWidth: "80px", textAlign: "center" }}>
-            <span style={{ fontSize: "28px", fontWeight: "bold", display: "block", color: totalHoursLeft < 1 ? "#ff4d4f" : "#4f6ef2" }}>{timeLeft.seconds}</span>
-            <span style={{ fontSize: "12px", color: "#a0a0a0" }}>שניות</span>
-          </div>
-          <div style={{ flexGrow: 1, textAlign: "left", fontSize: "13px", color: "#808080" }}>
-            מועד סיום: {new Date(endDateStr).toLocaleString("he-IL")}
-          </div>
+    <div className={`campaign-timeline-card timeline-glass-panel ${cardClass}`}>
+      <div className="timeline-header">
+        <h3 className="timeline-title">
+          <span>🏁</span> {title}
+        </h3>
+        <div className="timeline-end-date-badge">
+          ⏰ מועד סיום: {new Date(endDateStr).toLocaleString("he-IL")}
         </div>
+      </div>
+      
+      {timeLeft.ended ? (
+        <div style={{ fontSize: "24px", fontWeight: "bold", color: "#ff4d4f", textAlign: "center", padding: "15px 0" }}>הקמפיין הגיע לסיומו הרשמי! 🏁</div>
+      ) : (
+        <>
+          <div className="countdown-widget-container">
+            <div className="countdown-digit-card">
+              <span className="countdown-digit-value">{timeLeft.days}</span>
+              <span className="countdown-digit-label">ימים</span>
+            </div>
+            <div className="countdown-digit-card">
+              <span className="countdown-digit-value">{timeLeft.hours}</span>
+              <span className="countdown-digit-label">שעות</span>
+            </div>
+            <div className="countdown-digit-card">
+              <span className="countdown-digit-value">{timeLeft.minutes}</span>
+              <span className="countdown-digit-label">דקות</span>
+            </div>
+            <div className="countdown-digit-card">
+              <span className="countdown-digit-value">{timeLeft.seconds}</span>
+              <span className="countdown-digit-label">שניות</span>
+            </div>
+          </div>
+          <div className="timeline-status-bar-container">
+            <div className="timeline-status-bar-fill"></div>
+          </div>
+        </>
       )}
     </div>
   );

@@ -884,35 +884,81 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 16px;
-  background: rgba(59, 130, 246, 0.06);
-  border: 1px solid rgba(59, 130, 246, 0.15);
-  border-radius: 12px;
-  margin-bottom: 16px;
-  font-size: 0.85rem;
+  padding: 12px 18px;
+  background: linear-gradient(135deg, rgba(30, 41, 59, 0.75) 0%, rgba(15, 23, 42, 0.9) 100%);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: 16px;
+  margin-bottom: 20px;
+  font-size: 0.88rem;
   font-weight: 600;
-  color: #94a3b8;
+  color: #e2e8f0;
   direction: rtl;
   gap: 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 
+              0 8px 10px -6px rgba(0, 0, 0, 0.3),
+              inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.caller-top-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  padding: 6px 14px;
+  border-radius: 30px;
+  color: #34d399;
+  text-shadow: 0 0 10px rgba(16, 185, 129, 0.15);
 }
 
 .caller-top-stats strong {
-  color: #3b82f6;
-  font-size: 0.95rem;
+  color: #10b981;
+  font-size: 1rem;
+  font-weight: 800;
 }
 
 .caller-top-timeline {
   display: flex;
   align-items: center;
-  gap: 6px;
-  color: #f59e0b;
 }
 
 .timeline-text {
-  background: rgba(245, 158, 11, 0.1);
-  padding: 4px 8px;
-  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.08);
   border: 1px solid rgba(245, 158, 11, 0.2);
+  padding: 6px 14px;
+  border-radius: 30px;
+  color: #fbbf24;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  text-shadow: 0 0 10px rgba(245, 158, 11, 0.15);
+}
+
+/* Pulse Dot animation for active calls stats */
+.pulse-dot {
+  width: 8px;
+  height: 8px;
+  background-color: #10b981;
+  border-radius: 50%;
   display: inline-block;
+  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  animation: pulse-green 2s infinite;
+}
+
+@keyframes pulse-green {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
 }

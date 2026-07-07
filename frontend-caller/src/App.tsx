@@ -25,9 +25,9 @@ function CallerCountdown({ endDateStr }: { endDateStr: string }) {
       const pad = (n: number) => String(n).padStart(2, "0");
       
       if (days > 0) {
-        setTimeLeft(`ספירה לאחור: ${days} ימים ו-${pad(hours)}:${pad(minutes)}:${pad(seconds)}`);
+        setTimeLeft(`סיום הקמפיין: ${days} ימים ו-${pad(hours)}:${pad(minutes)}:${pad(seconds)}`);
       } else {
-        setTimeLeft(`ספירה לאחור: ${pad(hours)}:${pad(minutes)}:${pad(seconds)}`);
+        setTimeLeft(`סיום הקמפיין: ${pad(hours)}:${pad(minutes)}:${pad(seconds)}`);
       }
     };
 
@@ -472,6 +472,7 @@ export default function App() {
         {/* Top Stats & Timeline Bar */}
         <div className="caller-top-bar">
           <div className="caller-top-stats">
+            <span className="pulse-dot"></span>
             <span>שיחות שבוצעו: <strong>{sessionCount}</strong></span>
           </div>
           {campaignTimelineActive && campaignEndDate && (

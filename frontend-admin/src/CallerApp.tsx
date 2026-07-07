@@ -39,13 +39,7 @@ function CallerCountdown({ endDateStr }: { endDateStr: string }) {
 
   return (
     <div className="caller-timeline-compact">
-      <span className="timeline-label">🏁 סיום הקמפיין</span>
-      {timeLeft.days > 0 && (
-        <span className="timeline-days-badge">{timeLeft.days} ימים</span>
-      )}
-      <span className="timeline-clock-badge">
-        {pad(timeLeft.hours)}:{pad(timeLeft.minutes)}:{pad(timeLeft.seconds)}
-      </span>
+      <span>סיום הקמפיין: <strong>{timeLeft.days > 0 ? `${timeLeft.days} ימים, ` : ""}{pad(timeLeft.hours)}:{pad(timeLeft.minutes)}:{pad(timeLeft.seconds)}</strong></span>
     </div>
   );
 }
@@ -484,7 +478,7 @@ export default function App() {
         <div className="caller-top-bar">
           <div className="caller-top-stats">
             <span className="pulse-dot"></span>
-            <span>שיחות שבוצעו: <strong>{sessionCount}</strong></span>
+            <span>בוצעו: <strong>{sessionCount}</strong></span>
           </div>
           {campaignTimelineActive && campaignEndDate && (
             <div className="caller-top-timeline">

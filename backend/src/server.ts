@@ -358,8 +358,17 @@ function authenticateOwner(req: express.Request, res: express.Response, next: ex
   next();
 }
 
-function isExpiredAdmin(adminId: number): boolean {
+async function isExpiredAdmin(adminId: number): Promise<boolean> {
   if (adminId === 1) return false;
+  if (prisma) {
+    const sub = await prisma.subscription.findFirst({
+      where: { adminId, status: "ACTIVE" },
+      orderBy: { id: "desc" }
+    });
+    if (!sub) return true;
+    if (!sub.expiresAt) return false;
+    return new Date(sub.expiresAt).getTime() < Date.now();
+  }
   const sub = [...memory.subscriptions]
     .reverse()
     .find((s) => s.adminId === adminId && s.status === "ACTIVE");
@@ -424,7 +433,7 @@ async function authenticateAdmin(req: express.Request, res: express.Response, ne
   
   (req as any).adminId = admin.id;
 
-  if (isExpiredAdmin(admin.id)) {
+  if (await isExpiredAdmin(admin.id)) {
     const allowedPaths = [
       "/api/stats/admin",
       "/api/settings",
@@ -460,7 +469,7 @@ async function authenticateCaller(req: express.Request, res: express.Response, n
     return res.status(401).json({ error: "Caller phone not registered" });
   }
   
-  if (isExpiredAdmin(caller.adminId)) {
+  if (await isExpiredAdmin(caller.adminId)) {
     return res.status(402).json({ 
       error: "license_expired", 
       message: "רישיון המערכת פג. אנא פנה למנהל המטה." 
@@ -1467,7 +1476,7 @@ app.post("/api/login", rateLimiter(50, 60000), async (req, res) => {
       if (existing) adminId = existing.adminId;
     }
 
-    if (isExpiredAdmin(adminId)) {
+    if (await isExpiredAdmin(adminId)) {
       return res.status(402).json({ 
         error: "license_expired", 
         message: "רישיון המערכת פג. לא ניתן להתחבר." 
@@ -1519,7 +1528,7 @@ app.post("/api/admins/validate", rateLimiter(50, 60000), async (req, res) => {
     if (passcode === ownerPasscode) return res.json({ success: true, admin: { id: 0, fullName: "מנהל ראשי", planId: "legacy" } });
     const admin = await findAndUpgradeAdmin(passcode);
     if (!admin) return res.status(401).json({ success: false, error: "Invalid passcode" });
-    res.json({ success: true, admin: publicAdmin(admin), isExpired: isExpiredAdmin(admin.id) });
+    res.json({ success: true, admin: publicAdmin(admin), isExpired: await isExpiredAdmin(admin.id) });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
@@ -1679,16 +1688,30 @@ app.post("/api/admins/:adminId/update-expiry", authenticateOwner, async (req, re
     }
     const expiresAtStr = new Date(expiresAt).toISOString();
     
-    // Find admin
-    const admin = memory.admins.find((item) => item.id === adminId);
+    // Find admin in memory or DB
+    let admin = memory.admins.find((item) => item.id === adminId);
+    if (!admin && prisma) {
+      admin = await prisma.admin.findUnique({ where: { id: adminId } });
+    }
     if (!admin) return res.status(404).json({ error: "Admin request not found" });
 
+    // Update or create subscription
     let sub = memory.subscriptions.find((item) => item.adminId === adminId && item.status === "ACTIVE");
+    if (!sub && prisma) {
+      sub = await prisma.subscription.findFirst({
+        where: { adminId, status: "ACTIVE" },
+        orderBy: { id: "desc" }
+      });
+    }
+
     if (sub) {
       sub.expiresAt = expiresAtStr;
     } else {
+      const nextSubId = prisma 
+        ? ((await prisma.subscription.aggregate({ _max: { id: true } }))._max.id || 0) + 1
+        : memory.ids.subscription++;
       sub = {
-        id: memory.ids.subscription++,
+        id: nextSubId,
         adminId,
         planId: "monthly",
         status: "ACTIVE",
@@ -2185,7 +2208,7 @@ app.get("/api/stats/admin", authenticateAdmin, async (req, res) => {
     }
 
     const summary = await allStatsFromDb(adminId);
-    const result = { summary, callers, projects, recentCalls, isExpired: isExpiredAdmin(adminId) };
+    const result = { summary, callers, projects, recentCalls, isExpired: await isExpiredAdmin(adminId) };
     setCachedStats(cacheKey, result);
     res.json(result);
   } catch (error: any) { res.status(500).json({ error: error.message }); }

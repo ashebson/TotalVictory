@@ -7,6 +7,38 @@ const LOCAL_API_URL = window.location.protocol + "//" + window.location.hostname
 const API_URL = (import.meta.env.VITE_API_URL || (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" ? LOCAL_API_URL : PUBLIC_API_URL)).replace(/\/$/, "");
 const DEFAULT_WHATSAPP_TEMPLATE = "שלום {שם פרטי}, דיברנו עכשיו בטלפון. נשמח לתמיכתך במועמד/ת במסגרת מערכת הבחירות. ביחד נצליח!";
 
+function CallerCountdown({ endDateStr }: { endDateStr: string }) {
+  const [timeLeft, setTimeLeft] = useState("");
+
+  useEffect(() => {
+    const calculateTime = () => {
+      const difference = +new Date(endDateStr) - +new Date();
+      if (difference <= 0) {
+        setTimeLeft("הקמפיין הסתיים");
+        return;
+      }
+      const days = Math.floor(difference / (1000 * 60 * 60 * 24));
+      const hours = Math.floor((difference / (1000 * 60 * 60)) % 24);
+      const minutes = Math.floor((difference / 1000 / 60) % 60);
+      const seconds = Math.floor((difference / 1000) % 60);
+      
+      const pad = (n: number) => String(n).padStart(2, "0");
+      
+      if (days > 0) {
+        setTimeLeft(`ספירה לאחור: ${days} ימים ו-${pad(hours)}:${pad(minutes)}:${pad(seconds)}`);
+      } else {
+        setTimeLeft(`ספירה לאחור: ${pad(hours)}:${pad(minutes)}:${pad(seconds)}`);
+      }
+    };
+
+    calculateTime();
+    const interval = setInterval(calculateTime, 1000);
+    return () => clearInterval(interval);
+  }, [endDateStr]);
+
+  return <span className="timeline-text">⏰ {timeLeft}</span>;
+}
+
 type Project = {
   id: number;
   name: string;
@@ -65,6 +97,8 @@ export default function App() {
   const [showTemplateSettings, setShowTemplateSettings] = useState(false);
   const [templateSaved, setTemplateSaved] = useState(false);
   const [sessionCount, setSessionCount] = useState(0);
+  const [campaignTimelineActive, setCampaignTimelineActive] = useState(false);
+  const [campaignEndDate, setCampaignEndDate] = useState("");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const getCallerHeaders = (extraHeaders: Record<string, string> = {}) => {
@@ -110,6 +144,8 @@ export default function App() {
         const settings = await res.json();
         setGlobalWhatsappTemplate(settings.whatsapp_template || DEFAULT_WHATSAPP_TEMPLATE);
         setCampaignName(settings.campaign_name || "מטה טלפנים דיגיטלי");
+        setCampaignTimelineActive(settings.campaign_timeline_active === "true");
+        setCampaignEndDate(settings.campaign_end_date || "");
         try {
           const parsed = JSON.parse(settings.call_status_options || "[]");
           const byId = new Map(parsed.map((item: CallStatusOption) => [item.id, item]));
@@ -433,6 +469,18 @@ export default function App() {
         <div className="caller-header-actions"><button onClick={() => setShowTemplateSettings((value) => !value)} className="btn-logout">הודעה</button><button onClick={() => setSelectedProject(null)} className="btn-logout">פרויקט</button></div>
       </header>
       <main className="app-main">
+        {/* Top Stats & Timeline Bar */}
+        <div className="caller-top-bar">
+          <div className="caller-top-stats">
+            <span>שיחות שבוצעו: <strong>{sessionCount}</strong></span>
+          </div>
+          {campaignTimelineActive && campaignEndDate && (
+            <div className="caller-top-timeline">
+              <CallerCountdown endDateStr={campaignEndDate} />
+            </div>
+          )}
+        </div>
+
         {errorMsg && <div className="error-banner">{errorMsg}</div>}
         {showTemplateSettings && (
           <section className="template-settings card-enter-anim">
